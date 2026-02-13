@@ -291,15 +291,15 @@ func runObserve() error {
 
 		// Let's patch spec/status.
 		// Construct patch
-		patch := map[string]interface{}{}
-		specPatch := map[string]interface{}{
-			"status": map[string]interface{}{
+		patch := map[string]any{}
+		specPatch := map[string]any{
+			"status": map[string]any{
 				"state": newState,
 				"url":   url,
 			},
 		}
 		if newDetail != "" {
-			specPatch["status"].(map[string]interface{})["detail"] = newDetail
+			specPatch["status"].(map[string]any)["detail"] = newDetail
 		}
 
 		// Also update conditions?
@@ -335,7 +335,7 @@ func parseKnativeStatus(obj *unstructured.Unstructured) (bool, string, string) {
 	}
 
 	for _, c := range conditions {
-		cond, ok := c.(map[string]interface{})
+		cond, ok := c.(map[string]any)
 		if !ok {
 			continue
 		}
