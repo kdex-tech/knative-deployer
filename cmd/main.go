@@ -120,12 +120,7 @@ func runDeploy() error {
 	}
 
 	// Prepare env vars for the container
-	containerEnv := []map[string]any{
-		{
-			"name":  "PORT",
-			"value": "8080",
-		},
-	}
+	containerEnv := []map[string]any{}
 
 	// Add forwarded env vars
 	if cfg.ForwardedEnvVars != "" {
