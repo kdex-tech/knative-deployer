@@ -32,28 +32,54 @@ var (
 )
 
 type EnvConfig struct {
-	FunctionHost       string
-	FunctionGeneration string
-	FunctionName       string
-	FunctionNamespace  string
-	FunctionImage      string
-	ForwardedEnvVars   string
-	Audience           string
-	Issuer             string
-	JWKSURL            string
+	Audience                             string
+	ForwardedEnvVars                     string
+	FunctionBasePath                     string
+	FunctionGeneration                   string
+	FunctionHost                         string
+	FunctionImage                        string
+	FunctionName                         string
+	FunctionNamespace                    string
+	Issuer                               string
+	JWKSURL                              string
+	ScalingActivationScale               string
+	ScalingInitialScale                  string
+	ScalingMaxScale                      string
+	ScalingMetric                        string
+	ScalingMinScale                      string
+	ScalingPanicThresholdPercentage      string
+	ScalingPanicWindowPercentage         string
+	ScalingScaleDownDelay                string
+	ScalingScaleToZeroPodRetentionPeriod string
+	ScalingStableWindow                  string
+	ScalingTarget                        string
+	ScalingTargetUtilizationPercentage   string
 }
 
 func LoadEnv() (*EnvConfig, error) {
 	cfg := &EnvConfig{
-		FunctionHost:       os.Getenv("FUNCTION_HOST"),
-		FunctionGeneration: os.Getenv("FUNCTION_GENERATION"),
-		FunctionName:       os.Getenv("FUNCTION_NAME"),
-		FunctionNamespace:  os.Getenv("FUNCTION_NAMESPACE"),
-		FunctionImage:      os.Getenv("FUNCTION_IMAGE"),
-		ForwardedEnvVars:   os.Getenv("FORWARDED_ENV_VARS"),
-		Audience:           os.Getenv("AUDIENCE"),
-		Issuer:             os.Getenv("ISSUER"),
-		JWKSURL:            os.Getenv("JWKS_URL"),
+		Audience:                             os.Getenv("AUDIENCE"),
+		ForwardedEnvVars:                     os.Getenv("FORWARDED_ENV_VARS"),
+		FunctionBasePath:                     os.Getenv("FUNCTION_BASEPATH"),
+		FunctionGeneration:                   os.Getenv("FUNCTION_GENERATION"),
+		FunctionHost:                         os.Getenv("FUNCTION_HOST"),
+		FunctionImage:                        os.Getenv("FUNCTION_IMAGE"),
+		FunctionName:                         os.Getenv("FUNCTION_NAME"),
+		FunctionNamespace:                    os.Getenv("FUNCTION_NAMESPACE"),
+		Issuer:                               os.Getenv("ISSUER"),
+		JWKSURL:                              os.Getenv("JWKS_URL"),
+		ScalingActivationScale:               os.Getenv("SCALING_ACTIVATION_SCALE"),
+		ScalingInitialScale:                  os.Getenv("SCALING_INITIAL_SCALE"),
+		ScalingMaxScale:                      os.Getenv("SCALING_MAX_SCALE"),
+		ScalingMetric:                        os.Getenv("SCALING_METRIC"),
+		ScalingMinScale:                      os.Getenv("SCALING_MIN_SCALE"),
+		ScalingPanicThresholdPercentage:      os.Getenv("SCALING_PANIC_THRESHOLD_PERCENTAGE"),
+		ScalingPanicWindowPercentage:         os.Getenv("SCALING_PANIC_WINDOW_PERCENTAGE"),
+		ScalingScaleDownDelay:                os.Getenv("SCALING_SCALE_DOWN_DELAY"),
+		ScalingScaleToZeroPodRetentionPeriod: os.Getenv("SCALING_SCALE_TO_ZERO_POD_RETENTION_PERIOD"),
+		ScalingStableWindow:                  os.Getenv("SCALING_STABLE_WINDOW"),
+		ScalingTarget:                        os.Getenv("SCALING_TARGET"),
+		ScalingTargetUtilizationPercentage:   os.Getenv("SCALING_TARGET_UTILIZATION_PERCENTAGE"),
 	}
 
 	if cfg.FunctionName == "" {
@@ -154,9 +180,6 @@ func runDeploy() error {
 			"spec": map[string]any{
 				"template": map[string]any{
 					"metadata": map[string]any{
-						"annotations": map[string]any{
-							"autoscaling.knative.dev/minScale": "0", // Default to scale to zero
-						},
 						"labels": map[string]any{
 							"kdex.dev/function":   cfg.FunctionName,
 							"kdex.dev/generation": cfg.FunctionGeneration,
@@ -174,6 +197,47 @@ func runDeploy() error {
 			},
 		},
 	}
+
+	annotations := map[string]string{}
+
+	if cfg.ScalingActivationScale != "" {
+		annotations["autoscaling.knative.dev/activation-scale"] = cfg.ScalingActivationScale
+	}
+	if cfg.ScalingInitialScale != "" {
+		annotations["autoscaling.knative.dev/initial-scale"] = cfg.ScalingInitialScale
+	}
+	if cfg.ScalingMaxScale != "" {
+		annotations["autoscaling.knative.dev/max-scale"] = cfg.ScalingMaxScale
+	}
+	if cfg.ScalingMetric != "" {
+		annotations["autoscaling.knative.dev/metric"] = cfg.ScalingMetric
+	}
+	if cfg.ScalingMinScale != "" {
+		annotations["autoscaling.knative.dev/min-scale"] = cfg.ScalingMinScale
+	}
+	if cfg.ScalingPanicThresholdPercentage != "" {
+		annotations["autoscaling.knative.dev/panic-threshold-percentage"] = cfg.ScalingPanicThresholdPercentage
+	}
+	if cfg.ScalingPanicWindowPercentage != "" {
+		annotations["autoscaling.knative.dev/panic-window-percentage"] = cfg.ScalingPanicWindowPercentage
+	}
+	if cfg.ScalingScaleDownDelay != "" {
+		annotations["autoscaling.knative.dev/scale-down-delay"] = cfg.ScalingScaleDownDelay
+	}
+	if cfg.ScalingScaleToZeroPodRetentionPeriod != "" {
+		annotations["autoscaling.knative.dev/scale-to-zero-pod-retention-period"] = cfg.ScalingScaleToZeroPodRetentionPeriod
+	}
+	if cfg.ScalingTarget != "" {
+		annotations["autoscaling.knative.dev/target"] = cfg.ScalingTarget
+	}
+	if cfg.ScalingTargetUtilizationPercentage != "" {
+		annotations["autoscaling.knative.dev/target-utilization-percentage"] = cfg.ScalingTargetUtilizationPercentage
+	}
+	if cfg.ScalingStableWindow != "" {
+		annotations["autoscaling.knative.dev/window"] = cfg.ScalingStableWindow
+	}
+
+	service.SetAnnotations(annotations)
 
 	resourceClient := client.Resource(knativeServiceGVR).Namespace(cfg.FunctionNamespace)
 
@@ -263,7 +327,7 @@ func runObserve() error {
 	if isReady {
 		if currentState != "Ready" {
 			newState = "Ready"
-			newDetail = fmt.Sprintf("Ready: %s", url)
+			newDetail = fmt.Sprintf("Ready: %s%s", url, cfg.FunctionBasePath)
 			needsUpdate = true
 		}
 		if currentURL != url {
@@ -278,7 +342,7 @@ func runObserve() error {
 		if currentState == "Ready" {
 			// It was ready, now it's not.
 			newState = "FunctionDeployed" // Fallback? Or keep Ready but Degraded condition?
-			newDetail = fmt.Sprintf("NotReady: %s", msg)
+			newDetail = fmt.Sprintf("NotReady: %s%s", url, cfg.FunctionBasePath)
 			needsUpdate = true
 		}
 	}
