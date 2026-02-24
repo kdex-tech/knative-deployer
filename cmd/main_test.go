@@ -115,23 +115,10 @@ func TestRunDeployAndObserve(t *testing.T) {
 	_ = os.Setenv("KUBERNETES_SERVICE_HOST", "localhost")
 	_ = os.Setenv("KUBERNETES_SERVICE_PORT", "6443")
 
-	// Since we mock KUBERNETES_SERVICE_HOST, it will try to hit localhost:6443.
-	// That will probabilistically fail with connection refused instead of err config.
-	// The important part is that we traverse lines of runDeploy and runObserve.
-
 	err := runDeploy()
 	if err == nil {
 		t.Fatal("Expected error because cluster is not reachable")
 	}
-
-	// BUG: If runDeploy unexpectedly succeeds when mocking unreachable cluster, we'd want to track it
-	if err == nil {
-		t.Log("BUG: runDeploy unexpectedly succeeded when given a mock KUBERNETES_SERVICE_HOST")
-	}
-
-	// Wait, runDeploy calls getDynamicClient(), which fails because it tries to call InClusterConfig
-	// Wait, InClusterConfig expects token files. Let's see what error we get.
-	// "unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined" and if set, relies on ServiceAccount token.
 
 	err = runObserve()
 	if err == nil {
