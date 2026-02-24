@@ -19,13 +19,13 @@ func TestLoadEnv(t *testing.T) {
 		t.Fatal("Expected error when FUNCTION_NAME is missing")
 	}
 
-	os.Setenv("FUNCTION_NAME", "myfunc")
+	_ = os.Setenv("FUNCTION_NAME", "myfunc")
 	_, err = LoadEnv()
 	if err == nil {
 		t.Fatal("Expected error when FUNCTION_NAMESPACE is missing")
 	}
 
-	os.Setenv("FUNCTION_NAMESPACE", "myns")
+	_ = os.Setenv("FUNCTION_NAMESPACE", "myns")
 
 	// Default case (not deploy command)
 	cfg, err := LoadEnv()
@@ -46,7 +46,7 @@ func TestLoadEnv(t *testing.T) {
 		t.Fatal("Expected error when FUNCTION_IMAGE is missing for deploy")
 	}
 
-	os.Setenv("FUNCTION_IMAGE", "myimg")
+	_ = os.Setenv("FUNCTION_IMAGE", "myimg")
 	cfg, err = LoadEnv()
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
@@ -109,11 +109,11 @@ func TestParseKnativeStatus(t *testing.T) {
 
 func TestRunDeployAndObserve(t *testing.T) {
 	os.Clearenv()
-	os.Setenv("FUNCTION_NAME", "myfunc")
-	os.Setenv("FUNCTION_NAMESPACE", "myns")
-	os.Setenv("FUNCTION_IMAGE", "myimg")
-	os.Setenv("KUBERNETES_SERVICE_HOST", "localhost")
-	os.Setenv("KUBERNETES_SERVICE_PORT", "6443")
+	_ = os.Setenv("FUNCTION_NAME", "myfunc")
+	_ = os.Setenv("FUNCTION_NAMESPACE", "myns")
+	_ = os.Setenv("FUNCTION_IMAGE", "myimg")
+	_ = os.Setenv("KUBERNETES_SERVICE_HOST", "localhost")
+	_ = os.Setenv("KUBERNETES_SERVICE_PORT", "6443")
 
 	// Since we mock KUBERNETES_SERVICE_HOST, it will try to hit localhost:6443.
 	// That will probabilistically fail with connection refused instead of err config.
@@ -145,11 +145,15 @@ func TestWriteTerminationMessage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.Close()
-	defer os.Remove(f.Name())
+	_ = f.Close()
+	defer func() {
+		_ = os.Remove(f.Name())
+	}()
 
-	os.Setenv("TERMINATION_LOG_PATH", f.Name())
-	defer os.Unsetenv("TERMINATION_LOG_PATH")
+	_ = os.Setenv("TERMINATION_LOG_PATH", f.Name())
+	defer func() {
+		_ = os.Unsetenv("TERMINATION_LOG_PATH")
+	}()
 
 	err = writeTerminationMessage("http://foo.bar")
 	if err != nil {

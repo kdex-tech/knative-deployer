@@ -355,7 +355,7 @@ func runObserve() error {
 
 		// Let's patch spec/status.
 		// Construct patch
-		patch := map[string]any{}
+		var patch map[string]any
 		specPatch := map[string]any{
 			"status": map[string]any{
 				"state": newState,
