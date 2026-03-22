@@ -150,8 +150,7 @@ func runDeploy() error {
 
 	// Add forwarded env vars
 	if cfg.ForwardedEnvVars != "" {
-		vars := strings.Split(cfg.ForwardedEnvVars, ",")
-		for _, v := range vars {
+		for v := range strings.SplitSeq(cfg.ForwardedEnvVars, ",") {
 			v = strings.TrimSpace(v)
 			if v == "" {
 				continue
