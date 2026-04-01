@@ -14,10 +14,6 @@ on:
     - "**"
     - "!docs/**"
 
-env:
-  LC_ALL: en_US.UTF-8
-  PUBLISH: ${{ (github.repository == 'kdex-tech/knative-deployer') && startsWith(github.ref, 'refs/tags/') && (github.event_name != 'pull_request') }}
-
 defaults:
   run:
     shell: bash
@@ -74,7 +70,7 @@ jobs:
     name: Publish Docker Image
     needs: [ci, test-chart]
     runs-on: ubuntu-latest
-    if: ${{ env.PUBLISH == 'true' }}
+    if: (github.repository == 'kdex-tech/knative-deployer') && startsWith(github.ref, 'refs/tags/') && (github.event_name != 'pull_request')
     steps:
     - name: Clone the code
       uses: actions/checkout@v6
@@ -86,7 +82,7 @@ jobs:
     name: Publish Helm Chart
     needs: [publish-image, test-chart]
     runs-on: ubuntu-latest
-    if: ${{ env.PUBLISH == 'true' }}
+    if: (github.repository == 'kdex-tech/knative-deployer') && startsWith(github.ref, 'refs/tags/') && (github.event_name != 'pull_request')
     steps:
     - name: Clone the code
       uses: actions/checkout@v6

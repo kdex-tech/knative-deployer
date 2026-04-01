@@ -64,12 +64,16 @@ vet: ## Run go vet against code.
 TEST_PKGS ?= $(shell go list ./... | grep -v /e2e)
 TEST_ARGS ?=
 
-test: fmt vet ## Run tests.
+test: fmt vet verify-chart ## Run tests.
 ifeq ($(DEBUG),true)
 	dlv test $(TEST_PKGS) --headless --listen=:2345 --api-version=2 -- $(TEST_ARGS)
 else
 	go test $(TEST_PKGS) -coverprofile cover.out $(TEST_ARGS)
 endif
+
+.PHONY: verify-chart
+verify-chart: ## Run chart verification script.
+	./verify-addon.sh
 
 .PHONY: coverage
 coverage: test ## Generate and view test coverage report.
