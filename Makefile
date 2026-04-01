@@ -78,8 +78,12 @@ coverage: test ## Generate and view test coverage report.
 	@echo "--> Coverage report generated at file://$$(pwd)/cover.html"
 
 .PHONY: lint
-lint: golangci-lint ## Run golangci-lint linter
+lint: golangci-lint helm-lint ## Run golangci-lint and helm-lint
 	$(GOLANGCI_LINT) run
+
+.PHONY: helm-lint
+helm-lint: ## Run helm lint against chart.
+	helm lint ./chart
 
 .PHONY: lint-fix
 lint-fix: golangci-lint modernizer-fix ## Run golangci-lint linter and perform fixes

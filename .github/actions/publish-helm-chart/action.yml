@@ -1,0 +1,71 @@
+description: Publish Helm Chart to Github Container Registry (OCI)
+
+name: Publish Helm Chart
+
+runs:
+  steps:
+  - name: Install Helm
+    run: |
+      curl -sL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-4 | bash
+    shell: bash
+
+  - name: Verify Helm Installation
+    run: |
+      helm version
+    shell: bash
+
+  - name: Setup Go
+    uses: actions/setup-go@v6
+    with:
+      go-version-file: go.mod
+
+  - name: Install Oras CLI
+    run: |
+      VERSION="1.3.0"
+      export GOOS=$(go env GOOS)
+      export GOARCH=$(go env GOARCH)
+      curl -sSL "https://github.com/oras-project/oras/releases/download/v${VERSION}/oras_${VERSION}_${GOOS}_${GOARCH}.tar.gz" -o oras.tar.gz
+      mkdir -p oras-install/
+      tar -zxf oras.tar.gz -C oras-install/
+      sudo chown root:0 oras-install/oras
+      sudo mv oras-install/oras /usr/local/bin/
+      rm -rf oras.tar.gz oras-install/
+    shell: bash
+
+  - name: Verify Oras Installation
+    run: |
+      oras version
+    shell: bash
+
+  - name: Package the Helm Chart
+    run: |
+      export CHART_VERSION=$(echo ${{ github.ref }} | sed -e 's,.*/v\(.*\),\1,')
+      # make copy-bundled-for-chart # skipped for now
+      helm dependency update chart
+      mkdir -p dist
+      helm package --app-version ${CHART_VERSION} --version ${CHART_VERSION} -d dist chart
+    shell: bash
+
+  - name: Log in to registry with Helm
+    run: |
+      echo "${{ github.token }}" | helm registry login ghcr.io --username ${{ github.actor }} --password-stdin
+    shell: bash
+
+  - name: Log in to registry with Oras
+    run: |
+      echo "${{ github.token }}" | oras login ghcr.io --username ${{ github.actor }} --password-stdin
+    shell: bash
+
+  - name: Push Helm Charts to Github Container Registry (OCI)
+    run: |
+      CHART_VERSION=$(echo ${{ github.ref }} | sed -e 's,.*/v\(.*\),\1,')
+      REGISTRY_URL="ghcr.io/${{ github.repository_owner }}/charts"
+      OCI_URL="oci://$(echo "$REGISTRY_URL" | tr '[:upper:]' '[:lower:]')"
+      for f in *.tgz ; do
+          echo "$f"
+          helm push "$f" "$OCI_URL"
+          oras tag "${REGISTRY_URL}/kdex-knative-faas-adaptor:${CHART_VERSION}" latest
+      done
+    shell: bash
+    working-directory: dist
+  using: "composite"
