@@ -30,3 +30,9 @@ registry:
   # Secret containing registry credentials for kpack
   auth:
     secretName: kdex-registry-auth
+  # Registry to use for kpack builders (e.g. registry.kube-system.svc.cluster.local:5000)
+  url: "registry.kube-system.svc.cluster.local:5000"
+
+kpack:
+  builder:
+    tag: "latest"

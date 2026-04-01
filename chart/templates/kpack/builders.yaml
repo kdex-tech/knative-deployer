@@ -1,0 +1,87 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kpack-service-account
+  namespace: kpack
+---
+apiVersion: kpack.io/v1alpha2
+kind: ClusterStore
+metadata:
+  name: tiny-store
+spec:
+  sources:
+    - image: paketobuildpacks/go
+    - image: paketocommunity/rust
+---
+apiVersion: kpack.io/v1alpha2
+kind: ClusterStore
+metadata:
+  name: base-store
+spec:
+  sources:
+    - image: paketobuildpacks/nodejs
+    - image: paketobuildpacks/python
+---
+apiVersion: kpack.io/v1alpha2
+kind: ClusterStack
+metadata:
+  name: tiny-stack
+spec:
+  buildImage:
+    image: "paketobuildpacks/build-jammy-tiny"
+  id: "io.buildpacks.stacks.jammy.tiny"
+  runImage:
+    image: "paketobuildpacks/run-jammy-tiny"
+---
+apiVersion: kpack.io/v1alpha2
+kind: ClusterStack
+metadata:
+  name: base-stack
+spec:
+  buildImage:
+    image: "paketobuildpacks/build-jammy-base"
+  id: "io.buildpacks.stacks.jammy"
+  runImage:
+    image: "paketobuildpacks/run-jammy-base"
+---
+apiVersion: kpack.io/v1alpha2
+kind: ClusterBuilder
+metadata:
+  name: tiny-builder
+spec:
+  order:
+  - group:
+    - id: "paketo-buildpacks/go"
+  - group:
+    - id: "paketo-community/rust"
+  serviceAccountRef:
+    name: kpack-service-account
+    namespace: kpack
+  stack:
+    kind: ClusterStack
+    name: tiny-stack
+  store:
+    kind: ClusterStore
+    name: tiny-store
+  tag: {{ printf "%s/tiny-builder:%s" .Values.registry.url .Values.kpack.builder.tag | quote }}
+---
+apiVersion: kpack.io/v1alpha2
+kind: ClusterBuilder
+metadata:
+  name: base-builder
+spec:
+  order:
+  - group:
+    - id: "paketo-buildpacks/nodejs"
+  - group:
+    - id: "paketo-buildpacks/python"
+  serviceAccountRef:
+    name: kpack-service-account
+    namespace: kpack
+  stack:
+    kind: ClusterStack
+    name: base-stack
+  store:
+    kind: ClusterStore
+    name: base-store
+  tag: {{ printf "%s/base-builder:%s" .Values.registry.url .Values.kpack.builder.tag | quote }}
