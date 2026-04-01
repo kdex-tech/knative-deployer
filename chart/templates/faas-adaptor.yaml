@@ -1,0 +1,45 @@
+apiVersion: kdex.dev/v1alpha1
+kind: KDexClusterFaaSAdaptor
+metadata:
+  labels:
+    kdex.dev/default: "true"
+    {{- include "kdex-knative-faas-adaptor.labels" . | nindent 4 }}
+  name: {{ include "kdex-knative-faas-adaptor.fullname" . }}
+spec:
+  deployer:
+    env:
+    - name: DEBUG_SECURITY
+      value: "true"
+    image: {{ printf "%s:%s" .Values.image.repository (.Values.image.tag | default .Chart.AppVersion) | quote }}
+    command: ["/deployer", "deploy"]
+    serviceAccountName: {{ include "kdex-knative-faas-adaptor.serviceAccountName" . }}
+  observer:
+    image: {{ printf "%s:%s" .Values.image.repository (.Values.image.tag | default .Chart.AppVersion) | quote }}
+    command: ["/deployer", "observe"]
+    schedule: "*/5 * * * *"
+    serviceAccountName: {{ include "kdex-knative-faas-adaptor.serviceAccountName" . }}
+  defaultBuilderGenerator: tiny/go
+  builders:
+  - builderRef:
+      kind: ClusterBuilder
+      name: tiny-builder
+    languages:
+    - go
+    - rust
+    name: tiny
+  - builderRef:
+      kind: ClusterBuilder
+      name: base-builder
+    languages:
+    - nodejs
+    - python
+    name: base
+  generators:
+  - entrypoint: "./cmd/main.go"
+    git:
+      image: ghcr.io/kdex-tech/cli-tools:0.3.9
+      committerEmail: test@kdex.dev
+      committerName: KDex Codegen Bot
+    image: ghcr.io/kdex-tech/fngogen:0.1.1
+    language: go
+  provider: knative
