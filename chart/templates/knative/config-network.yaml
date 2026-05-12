@@ -1,3 +1,4 @@
+{{- if .Values.knativeServing.enabled }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -9,3 +10,5 @@ metadata:
     app.kubernetes.io/version: "1.20.1"
 data:
   ingress.class: "traefik.ingress.networking.knative.dev"
+
+{{- end }}

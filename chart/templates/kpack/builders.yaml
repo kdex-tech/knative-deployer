@@ -1,3 +1,4 @@
+{{- if .Values.kpack.enabled }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -85,3 +86,5 @@ spec:
     kind: ClusterStore
     name: base-store
   tag: {{ printf "%s/base-builder:%s" .Values.registry.url .Values.kpack.builder.tag | quote }}
+
+{{- end }}

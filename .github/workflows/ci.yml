@@ -20,7 +20,7 @@ defaults:
 
 permissions:
   packages: write
-  contents: read
+  contents: write
 
 jobs:
   ci:
@@ -80,7 +80,7 @@ jobs:
 
   publish-chart:
     name: Publish Helm Chart
-    needs: [publish-image, test-chart]
+    needs: [publish-image]
     runs-on: ubuntu-latest
     if: (github.repository == 'kdex-tech/knative-deployer') && startsWith(github.ref, 'refs/tags/') && (github.event_name != 'pull_request')
     steps:

@@ -1,3 +1,4 @@
+{{- if .Values.knativeServing.enabled }}
 # Copyright 2020 The Knative Authors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -6690,3 +6691,5 @@ spec:
           jsonPath: .spec.image
 
 ---
+
+{{- end }}
