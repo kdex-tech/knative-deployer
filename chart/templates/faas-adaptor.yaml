@@ -42,4 +42,11 @@ spec:
       committerName: KDex Codegen Bot
     image: ghcr.io/kdex-tech/fngogen:0.1.1
     language: go
+  - entrypoint: "./src/main.ts"
+    git:
+      image: ghcr.io/kdex-tech/cli-tools:0.3.9
+      committerEmail: test@kdex.dev
+      committerName: KDex Codegen Bot
+    image: ghcr.io/kdex-tech/fnnodejsgen:0.1.1
+    language: nodejs
   provider: knative
