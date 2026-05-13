@@ -449,8 +449,18 @@ spec:
           type: RuntimeDefault
       priorityClassName: kpack-control-plane
       serviceAccountName: controller
+      {{- with .Values.kpack.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.kpack.nodeSelector }}
       nodeSelector:
-        kubernetes.io/os: linux
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.kpack.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
       - name: controller
         securityContext:
@@ -883,8 +893,18 @@ spec:
           type: RuntimeDefault
       priorityClassName: kpack-control-plane
       serviceAccountName: webhook
+      {{- with .Values.kpack.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.kpack.nodeSelector }}
       nodeSelector:
-        kubernetes.io/os: linux
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.kpack.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
       - name: webhook
         securityContext:

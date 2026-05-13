@@ -45,3 +45,11 @@ kpack:
   enabled: true
   builder:
     tag: "latest"
+  # Scheduling for kpack-controller and kpack-webhook. nodeSelector
+  # replaces the chart default ({kubernetes.io/os: linux}); include that
+  # key explicitly if you want to keep the OS filter. tolerations is
+  # additive: empty by default, leaves the pods with no extra tolerations.
+  nodeSelector:
+    kubernetes.io/os: linux
+  tolerations: []
+  affinity: {}
