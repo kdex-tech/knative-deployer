@@ -40,6 +40,7 @@ type EnvConfig struct {
 	FunctionImage                        string
 	FunctionName                         string
 	FunctionNamespace                    string
+	FunctionServiceAccountName           string
 	Issuer                               string
 	JWKSURL                              string
 	ScalingActivationScale               string
@@ -66,6 +67,7 @@ func LoadEnv() (*EnvConfig, error) {
 		FunctionImage:                        os.Getenv("FUNCTION_IMAGE"),
 		FunctionName:                         os.Getenv("FUNCTION_NAME"),
 		FunctionNamespace:                    os.Getenv("FUNCTION_NAMESPACE"),
+		FunctionServiceAccountName:           os.Getenv("FUNCTION_SERVICE_ACCOUNT_NAME"),
 		Issuer:                               os.Getenv("ISSUER"),
 		JWKSURL:                              os.Getenv("JWKS_URL"),
 		ScalingActivationScale:               os.Getenv("SCALING_ACTIVATION_SCALE"),
@@ -164,6 +166,22 @@ func runDeploy() error {
 	}
 
 	// Prepare Knative Service definition
+	podSpec := map[string]any{
+		"containers": []map[string]any{
+			{
+				"image": cfg.FunctionImage,
+				"env":   containerEnv,
+			},
+		},
+	}
+	// Honor the optional FUNCTION_SERVICE_ACCOUNT_NAME so the runtime pod
+	// can run as a non-default KSA (e.g. for Workload Identity binding to a
+	// GCP service account). When empty, Knative falls back to the
+	// namespace's default ServiceAccount, preserving prior behavior.
+	if cfg.FunctionServiceAccountName != "" {
+		podSpec["serviceAccountName"] = cfg.FunctionServiceAccountName
+	}
+
 	service := &unstructured.Unstructured{
 		Object: map[string]any{
 			"apiVersion": "serving.knative.dev/v1",
@@ -184,14 +202,7 @@ func runDeploy() error {
 							"kdex.dev/generation": cfg.FunctionGeneration,
 						},
 					},
-					"spec": map[string]any{
-						"containers": []map[string]any{
-							{
-								"image": cfg.FunctionImage,
-								"env":   containerEnv,
-							},
-						},
-					},
+					"spec": podSpec,
 				},
 			},
 		},

@@ -56,6 +56,32 @@ func TestLoadEnv(t *testing.T) {
 	}
 }
 
+func TestLoadEnv_ServiceAccountName(t *testing.T) {
+	t.Cleanup(func() { os.Clearenv() })
+	os.Clearenv()
+	_ = os.Setenv("FUNCTION_NAME", "myfunc")
+	_ = os.Setenv("FUNCTION_NAMESPACE", "myns")
+
+	// Unset: FunctionServiceAccountName should be empty.
+	cfg, err := LoadEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.FunctionServiceAccountName != "" {
+		t.Errorf("expected empty FunctionServiceAccountName when env unset; got %q", cfg.FunctionServiceAccountName)
+	}
+
+	// Set: the cfg field carries the value through.
+	_ = os.Setenv("FUNCTION_SERVICE_ACCOUNT_NAME", "my-runtime-sa")
+	cfg, err = LoadEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.FunctionServiceAccountName != "my-runtime-sa" {
+		t.Errorf("FunctionServiceAccountName = %q; want my-runtime-sa", cfg.FunctionServiceAccountName)
+	}
+}
+
 func TestParseKnativeStatus(t *testing.T) {
 	obj := &unstructured.Unstructured{
 		Object: map[string]any{},
