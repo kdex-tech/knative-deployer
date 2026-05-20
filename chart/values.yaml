@@ -5,8 +5,12 @@
 image:
   repository: ghcr.io/kdex-tech/knative-deployer
   pullPolicy: IfNotPresent
-  # Overrides the image tag whose default is the chart appVersion.
-  tag: "v0.1.2"
+  # When empty, the chart template falls back to .Chart.AppVersion,
+  # which CI overrides to the git tag on each release (see
+  # .github/actions/publish-helm-chart/action.yml's `helm package
+  # --app-version ${CHART_VERSION}`). Set this to a specific tag here
+  # only to pin against a non-release build.
+  tag: ""
 
 imagePullSecrets: []
 nameOverride: ""

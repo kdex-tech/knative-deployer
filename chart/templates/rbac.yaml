@@ -32,6 +32,32 @@ rules:
       - get
       - patch
       - update
+  # kpack Build auto-recovery: the observe CronJob inspects the
+  # kpack.io/Image's latest Build, classifies its failure mode, and
+  # for preemption-induced failures bumps an annotation on the Image
+  # to trigger a fresh Build. Read on Pod/Node to evaluate the
+  # preemption heuristic (DeletionTimestamp, status.reason, node
+  # Ready=False, init-container Killed-not-OOMKilled).
+  - apiGroups:
+      - kpack.io
+    resources:
+      - images
+    verbs:
+      - get
+      - patch
+  - apiGroups:
+      - kpack.io
+    resources:
+      - builds
+    verbs:
+      - get
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+      - nodes
+    verbs:
+      - get
 {{- if .Values.serviceAccount.create }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1

@@ -297,27 +297,54 @@ func runObserve() error {
 		return err
 	}
 
-	// 1. Get Knative Service Status
+	ctx := context.Background()
+
+	// 1. Get Knative Service Status. A NotFound is a normal state for
+	// brand-new functions that haven't built+deployed yet; we keep
+	// going so the kpack-Build auto-recovery check below still runs
+	// (preempted Build pods are exactly the case where the Knative
+	// Service hasn't appeared yet).
 	ksClient := client.Resource(knativeServiceGVR).Namespace(cfg.FunctionNamespace)
-	ksObj, err := ksClient.Get(context.Background(), cfg.FunctionName, metav1.GetOptions{})
+	ksObj, err := ksClient.Get(ctx, cfg.FunctionName, metav1.GetOptions{})
+	ksNotFound := false
 	if err != nil {
 		if errors.IsNotFound(err) {
-			// Service deleted? Should probably report this.
-			fmt.Printf("Knative Service %s/%s not found\n", cfg.FunctionNamespace, cfg.FunctionName)
-			// TODO: Update KDexFunction to failure/unknown?
-			return nil
+			ksNotFound = true
+			fmt.Printf("Knative Service %s/%s not found (yet)\n", cfg.FunctionNamespace, cfg.FunctionName)
+		} else {
+			return fmt.Errorf("failed to get knative service: %w", err)
 		}
-		return fmt.Errorf("failed to get knative service: %w", err)
 	}
 
-	isReady, msg, url := parseKnativeStatus(ksObj)
-	fmt.Printf("Observation: Ready=%v, Msg=%s, URL=%s\n", isReady, msg, url)
+	isReady := false
+	msg := ""
+	url := ""
+	if !ksNotFound {
+		isReady, msg, url = parseKnativeStatus(ksObj)
+		fmt.Printf("Observation: Ready=%v, Msg=%s, URL=%s\n", isReady, msg, url)
+	}
 
 	// 2. Get KDexFunction
 	kfClient := client.Resource(kdexFunctionGVR).Namespace(cfg.FunctionNamespace)
-	kfObj, err := kfClient.Get(context.Background(), cfg.FunctionName, metav1.GetOptions{})
+	kfObj, err := kfClient.Get(ctx, cfg.FunctionName, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to get kdex function: %w", err)
+	}
+
+	// 2a. kpack Build auto-recovery. When the Knative Service isn't
+	// Ready (or doesn't exist), inspect the upstream kpack Build for a
+	// preemption signal and retry via image.kpack.io/additionalBuildNeeded
+	// if we're inside the budget + cooldown. No-op for the happy path
+	// (Service Ready or no kpack Image involved) and for genuine build
+	// failures (those need operator attention, not auto-retry).
+	if !isReady {
+		if retryErr := checkAndRetryFailedBuild(ctx, client, kfObj, cfg); retryErr != nil {
+			fmt.Fprintf(os.Stderr, "auto-recovery check error (continuing): %v\n", retryErr)
+		}
+	}
+
+	if ksNotFound {
+		return nil
 	}
 
 	// 3. Update Status if needed
