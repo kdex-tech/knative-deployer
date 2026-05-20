@@ -82,6 +82,39 @@ func TestLoadEnv_ServiceAccountName(t *testing.T) {
 	}
 }
 
+func TestLoadEnv_TolerationsAndNodeSelector(t *testing.T) {
+	t.Cleanup(func() { os.Clearenv() })
+	os.Clearenv()
+	_ = os.Setenv("FUNCTION_NAME", "myfunc")
+	_ = os.Setenv("FUNCTION_NAMESPACE", "myns")
+
+	// Unset: both fields empty, no rejection.
+	cfg, err := LoadEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.FunctionTolerations != "" || cfg.FunctionNodeSelector != "" {
+		t.Errorf("expected both empty when unset; got tols=%q ns=%q",
+			cfg.FunctionTolerations, cfg.FunctionNodeSelector)
+	}
+
+	// Set: env values flow through verbatim (parsing happens in runDeploy).
+	tols := `[{"key":"cloud.google.com/gke-spot","operator":"Equal","value":"true","effect":"NoSchedule"}]`
+	ns := `{"component":"workload","kubernetes.io/arch":"arm64"}`
+	_ = os.Setenv("FUNCTION_TOLERATIONS", tols)
+	_ = os.Setenv("FUNCTION_NODE_SELECTOR", ns)
+	cfg, err = LoadEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.FunctionTolerations != tols {
+		t.Errorf("FunctionTolerations = %q; want %q", cfg.FunctionTolerations, tols)
+	}
+	if cfg.FunctionNodeSelector != ns {
+		t.Errorf("FunctionNodeSelector = %q; want %q", cfg.FunctionNodeSelector, ns)
+	}
+}
+
 func TestParseKnativeStatus(t *testing.T) {
 	obj := &unstructured.Unstructured{
 		Object: map[string]any{},

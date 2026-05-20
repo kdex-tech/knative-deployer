@@ -40,7 +40,9 @@ type EnvConfig struct {
 	FunctionImage                        string
 	FunctionName                         string
 	FunctionNamespace                    string
+	FunctionNodeSelector                 string
 	FunctionServiceAccountName           string
+	FunctionTolerations                  string
 	Issuer                               string
 	JWKSURL                              string
 	ScalingActivationScale               string
@@ -67,7 +69,9 @@ func LoadEnv() (*EnvConfig, error) {
 		FunctionImage:                        os.Getenv("FUNCTION_IMAGE"),
 		FunctionName:                         os.Getenv("FUNCTION_NAME"),
 		FunctionNamespace:                    os.Getenv("FUNCTION_NAMESPACE"),
+		FunctionNodeSelector:                 os.Getenv("FUNCTION_NODE_SELECTOR"),
 		FunctionServiceAccountName:           os.Getenv("FUNCTION_SERVICE_ACCOUNT_NAME"),
+		FunctionTolerations:                  os.Getenv("FUNCTION_TOLERATIONS"),
 		Issuer:                               os.Getenv("ISSUER"),
 		JWKSURL:                              os.Getenv("JWKS_URL"),
 		ScalingActivationScale:               os.Getenv("SCALING_ACTIVATION_SCALE"),
@@ -180,6 +184,31 @@ func runDeploy() error {
 	// namespace's default ServiceAccount, preserving prior behavior.
 	if cfg.FunctionServiceAccountName != "" {
 		podSpec["serviceAccountName"] = cfg.FunctionServiceAccountName
+	}
+
+	// FUNCTION_TOLERATIONS / FUNCTION_NODE_SELECTOR steer the runtime
+	// pod onto a tainted node pool (kdex-tech/knative-deployer#3,
+	// paired with kdex-crds#7 + kdex-host-manager#23). REQUIRES the
+	// cluster to enable Knative's kubernetes.podspec-tolerations +
+	// kubernetes.podspec-nodeselector feature flags, otherwise the
+	// Knative webhook will reject the spec we apply below.
+	if cfg.FunctionTolerations != "" {
+		var tolerations []any
+		if err := json.Unmarshal([]byte(cfg.FunctionTolerations), &tolerations); err != nil {
+			return fmt.Errorf("unmarshal FUNCTION_TOLERATIONS: %w", err)
+		}
+		if len(tolerations) > 0 {
+			podSpec["tolerations"] = tolerations
+		}
+	}
+	if cfg.FunctionNodeSelector != "" {
+		var nodeSelector map[string]any
+		if err := json.Unmarshal([]byte(cfg.FunctionNodeSelector), &nodeSelector); err != nil {
+			return fmt.Errorf("unmarshal FUNCTION_NODE_SELECTOR: %w", err)
+		}
+		if len(nodeSelector) > 0 {
+			podSpec["nodeSelector"] = nodeSelector
+		}
 	}
 
 	service := &unstructured.Unstructured{
