@@ -27,6 +27,9 @@ spec:
     - go
     - rust
     name: tiny
+    {{- with .Values.builders.serviceAccountName }}
+    serviceAccountName: {{ . | quote }}
+    {{- end }}
   - builderRef:
       kind: ClusterBuilder
       name: base-builder
@@ -34,6 +37,9 @@ spec:
     - nodejs
     - python
     name: base
+    {{- with .Values.builders.serviceAccountName }}
+    serviceAccountName: {{ . | quote }}
+    {{- end }}
   generators:
   - entrypoint: "./cmd/main.go"
     git:
