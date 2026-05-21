@@ -59,19 +59,28 @@ generatorGit:
   committerEmail: test@kdex.dev
   committerName: KDex Codegen Bot
 
-# Builder service-account name applied to every entry in the
-# KDexClusterFaaSAdaptor's builders list. host-manager stamps this onto
-# the per-function kpack.io/Image's spec.serviceAccountName when the
-# function is in codegen mode (no spec.origin.source pre-set on the CR),
-# which governs the kpack BUILD pod's registry-push identity. The named
-# SA must exist in each KDexFunction's namespace and carry the
-# Workload-Identity annotation pointing at a GSA with
-# roles/artifactregistry.writer on the image registry. Empty string
-# preserves legacy behavior (host-manager falls back to its own SA,
-# which typically lacks AR write — builds fail with
-# "Permission 'artifactregistry.repositories.uploadArtifacts' denied").
+# Builder configuration applied to every entry in the
+# KDexClusterFaaSAdaptor's builders list. host-manager stamps these
+# onto the per-function kpack.io/Image's spec.* when the function is
+# in codegen mode (no spec.origin.source pre-set on the CR).
 builders:
+  # serviceAccountName governs the kpack BUILD pod's registry-push
+  # identity. The named SA must exist in each KDexFunction's namespace
+  # and carry the Workload-Identity annotation pointing at a GSA with
+  # roles/artifactregistry.writer on the image registry. Empty string
+  # preserves legacy behavior (host-manager falls back to its own SA,
+  # which typically lacks AR write — builds fail with
+  # "Permission 'artifactregistry.repositories.uploadArtifacts' denied").
   serviceAccountName: ""
+
+  # resources are forwarded onto the kpack.io/Image's
+  # spec.build.resources. Use to cap or guarantee CPU/memory for the
+  # BUILD pod; especially relevant for compile-heavy languages (Go,
+  # Rust) whose link/compile steps can exceed kpack's default 256Mi
+  # best-effort QoS budget and either OOM-kill or thrash. Empty map
+  # leaves it at the chart-level default (no resources block → kpack's
+  # own internal defaults take over).
+  resources: {}
 
 # Install the bundled kpack release (CRDs + controllers + ClusterBuilders).
 # Disable when kpack is managed externally.

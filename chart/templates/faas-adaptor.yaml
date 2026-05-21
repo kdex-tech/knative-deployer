@@ -30,6 +30,10 @@ spec:
     {{- with .Values.builders.serviceAccountName }}
     serviceAccountName: {{ . | quote }}
     {{- end }}
+    {{- with .Values.builders.resources }}
+    resources:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
   - builderRef:
       kind: ClusterBuilder
       name: base-builder
@@ -39,6 +43,10 @@ spec:
     name: base
     {{- with .Values.builders.serviceAccountName }}
     serviceAccountName: {{ . | quote }}
+    {{- end }}
+    {{- with .Values.builders.resources }}
+    resources:
+      {{- toYaml . | nindent 6 }}
     {{- end }}
   generators:
   - entrypoint: "./cmd/main.go"
