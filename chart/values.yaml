@@ -82,6 +82,19 @@ builders:
   # own internal defaults take over).
   resources: {}
 
+  # env is forwarded onto the kpack.io/Image's spec.build.env. Each
+  # entry is passed to every buildpack in the lifecycle. Use this to
+  # cross-compile to a different runtime architecture than the build
+  # node: e.g. GOOS=linux GOARCH=arm64 produces an arm64 function
+  # image even when kpack-build-pool nodes are amd64 (the upstream
+  # ghcr.io/buildpacks-community/kpack/* images don't ship arm64
+  # binaries, so the build pool stays amd64). Without this, function
+  # pods scheduled onto an arm64 runtime pool crash with
+  # "exec /cnb/process/cmd: exec format error" — the kpack-built
+  # amd64 binary can't run on arm64. Empty list leaves the default
+  # (build host's architecture).
+  env: []
+
 # Install the bundled kpack release (CRDs + controllers + ClusterBuilders).
 # Disable when kpack is managed externally.
 kpack:
