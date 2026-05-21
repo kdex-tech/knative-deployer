@@ -43,6 +43,22 @@ registry:
 knativeServing:
   enabled: true
 
+# Git tooling shared by every entry in the KDexClusterFaaSAdaptor's
+# generators list. host-manager spawns codegen Jobs whose
+# git-checkout / generate-code / git-push init containers all run this
+# image; the image must ship `git`, `durl` and the
+# git_checkout / git_push / patch_source_status scripts from
+# ghcr.io/kdex-tech/cli-tools. 0.3.12+ bundles the safe.directory
+# workaround required when the codegen Job's EmptyDir mounts as
+# root:root (the default in PSSRestricted pods without fsGroup) — see
+# kdex-tech/cli-tools#1.
+generatorGit:
+  image:
+    repository: ghcr.io/kdex-tech/cli-tools
+    tag: "0.3.12"
+  committerEmail: test@kdex.dev
+  committerName: KDex Codegen Bot
+
 # Install the bundled kpack release (CRDs + controllers + ClusterBuilders).
 # Disable when kpack is managed externally.
 kpack:
