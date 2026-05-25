@@ -38,6 +38,10 @@ spec:
     env:
       {{- toYaml . | nindent 4 }}
     {{- end }}
+    {{- with .Values.builders.cache }}
+    cache:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
   - builderRef:
       kind: ClusterBuilder
       name: base-builder
@@ -55,6 +59,10 @@ spec:
     {{- with .Values.builders.env }}
     env:
       {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- with .Values.builders.cache }}
+    cache:
+      {{- toYaml . | nindent 6 }}
     {{- end }}
   generators:
   - entrypoint: "./cmd/main.go"

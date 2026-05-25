@@ -95,6 +95,22 @@ builders:
   # (build host's architecture).
   env: []
 
+  # cache.volumeSize is forwarded onto the kpack.io/Image's
+  # spec.cache.volume.size, which kpack passes onto the per-Image
+  # PVC sized for build-layer reuse across builds. kpack's own
+  # default when this field is unset on the Image is "2G", which
+  # is too small for typical Go/Rust dep trees: the cache thrashes
+  # and link/compile peaks blow past the container memory budget.
+  # 10Gi works comfortably for the languages this chart's builders
+  # ship (go, rust via tiny; nodejs, python via base). Bump up
+  # freely if your dep trees demand it; never bump down (k8s
+  # forbids shrinking PVCs and the kpack controller will error
+  # every reconcile until the spec is bumped back up or the PVC
+  # is deleted). Requires kdex-crds v0.14.217+ which added the
+  # Builder.Cache field plumbed through here.
+  cache:
+    volumeSize: "10Gi"
+
 # Install the bundled kpack release (CRDs + controllers + ClusterBuilders).
 # Disable when kpack is managed externally.
 kpack:
