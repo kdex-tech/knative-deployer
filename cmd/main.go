@@ -43,6 +43,7 @@ type EnvConfig struct {
 	FunctionNodeSelector                 string
 	FunctionServiceAccountName           string
 	FunctionTolerations                  string
+	FunctionUserEnv                      string
 	Issuer                               string
 	JWKSURL                              string
 	ScalingActivationScale               string
@@ -72,6 +73,7 @@ func LoadEnv() (*EnvConfig, error) {
 		FunctionNodeSelector:                 os.Getenv("FUNCTION_NODE_SELECTOR"),
 		FunctionServiceAccountName:           os.Getenv("FUNCTION_SERVICE_ACCOUNT_NAME"),
 		FunctionTolerations:                  os.Getenv("FUNCTION_TOLERATIONS"),
+		FunctionUserEnv:                      os.Getenv("FUNCTION_USER_ENV"),
 		Issuer:                               os.Getenv("ISSUER"),
 		JWKSURL:                              os.Getenv("JWKS_URL"),
 		ScalingActivationScale:               os.Getenv("SCALING_ACTIVATION_SCALE"),
@@ -103,6 +105,52 @@ func LoadEnv() (*EnvConfig, error) {
 	}
 
 	return cfg, nil
+}
+
+// buildContainerEnv assembles the env block that will land on the Knative
+// Service container. Two layers:
+//
+//  1. ForwardedEnvVars — a comma-separated list of names whose values are
+//     read out of the deployer-pod's own env (controller-populated common
+//     vars: AUDIENCE, FUNCTION_*, ISSUER, etc.). These flow through as
+//     plain {name, value} entries.
+//  2. FunctionUserEnv — a JSON-marshaled []corev1.EnvVar from the
+//     KDexFunction CR's spec.env, splat into the env block unchanged so
+//     valueFrom.secretKeyRef / configMapKeyRef / etc. survive. Critical:
+//     do NOT route user env through ForwardedEnvVars + os.Getenv — the
+//     kubelet would have already dereferenced the secretKeyRef into a
+//     plain string at deployer-pod start, leaking the secret value into
+//     .spec.containers[0].env[].value on the resulting Revision YAML
+//     (readable to anyone with `get revision`, much broader RBAC than
+//     `get secret`). See kdex-tech/kdex-host-manager#XX.
+//
+// Extracted from runDeploy for unit testability; runDeploy passes
+// os.Getenv for the forwarded-var lookup.
+func buildContainerEnv(cfg *EnvConfig, getenv func(string) string) ([]map[string]any, error) {
+	containerEnv := []map[string]any{}
+
+	if cfg.ForwardedEnvVars != "" {
+		for v := range strings.SplitSeq(cfg.ForwardedEnvVars, ",") {
+			v = strings.TrimSpace(v)
+			if v == "" {
+				continue
+			}
+			containerEnv = append(containerEnv, map[string]any{
+				"name":  v,
+				"value": getenv(v),
+			})
+		}
+	}
+
+	if cfg.FunctionUserEnv != "" {
+		var userEnv []map[string]any
+		if err := json.Unmarshal([]byte(cfg.FunctionUserEnv), &userEnv); err != nil {
+			return nil, fmt.Errorf("unmarshal FUNCTION_USER_ENV: %w", err)
+		}
+		containerEnv = append(containerEnv, userEnv...)
+	}
+
+	return containerEnv, nil
 }
 
 func main() {
@@ -151,22 +199,9 @@ func runDeploy() error {
 		return err
 	}
 
-	// Prepare env vars for the container
-	containerEnv := []map[string]any{}
-
-	// Add forwarded env vars
-	if cfg.ForwardedEnvVars != "" {
-		for v := range strings.SplitSeq(cfg.ForwardedEnvVars, ",") {
-			v = strings.TrimSpace(v)
-			if v == "" {
-				continue
-			}
-			val := os.Getenv(v)
-			containerEnv = append(containerEnv, map[string]any{
-				"name":  v,
-				"value": val,
-			})
-		}
+	containerEnv, err := buildContainerEnv(cfg, os.Getenv)
+	if err != nil {
+		return err
 	}
 
 	// Prepare Knative Service definition

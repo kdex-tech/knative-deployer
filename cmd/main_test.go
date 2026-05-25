@@ -115,6 +115,143 @@ func TestLoadEnv_TolerationsAndNodeSelector(t *testing.T) {
 	}
 }
 
+// buildContainerEnv: secretKeyRef survives the host-manager -> deployer
+// Job -> knative-deployer boundary unchanged. Regression for the
+// security finding where the kubelet dereferenced spec.env's
+// valueFrom.secretKeyRef at deployer-pod start (because host-manager
+// used to splice spec.env into the Job's env block directly), and the
+// resulting Revision YAML stored secrets as plaintext .value entries.
+// The fix routes user env opaquely as JSON in FUNCTION_USER_ENV; this
+// test pins that the unmarshaled entries land in containerEnv with
+// valueFrom shape intact.
+func TestBuildContainerEnv_PreservesSecretKeyRef(t *testing.T) {
+	cfg := &EnvConfig{
+		FunctionUserEnv: `[
+			{"name":"RESEND_API_KEY","valueFrom":{"secretKeyRef":{"name":"knowdrive-resend-credentials","key":"api_key"}}},
+			{"name":"HOST_DOMAIN","value":"dev.knowdrive.ai"}
+		]`,
+	}
+	env, err := buildContainerEnv(cfg, func(string) string { return "" })
+	if err != nil {
+		t.Fatalf("buildContainerEnv: %v", err)
+	}
+	if len(env) != 2 {
+		t.Fatalf("env len = %d; want 2", len(env))
+	}
+
+	// Entry 0: secretKeyRef preserved (no inline .value).
+	if env[0]["name"] != "RESEND_API_KEY" {
+		t.Errorf("env[0].name = %v; want RESEND_API_KEY", env[0]["name"])
+	}
+	if _, hasValue := env[0]["value"]; hasValue {
+		t.Errorf("env[0] must NOT have a 'value' key (secretKeyRef path); got %+v", env[0])
+	}
+	vf, ok := env[0]["valueFrom"].(map[string]any)
+	if !ok {
+		t.Fatalf("env[0].valueFrom not a map: %+v", env[0]["valueFrom"])
+	}
+	skr, ok := vf["secretKeyRef"].(map[string]any)
+	if !ok {
+		t.Fatalf("env[0].valueFrom.secretKeyRef not a map: %+v", vf["secretKeyRef"])
+	}
+	if skr["name"] != "knowdrive-resend-credentials" || skr["key"] != "api_key" {
+		t.Errorf("secretKeyRef = %+v; want {name:knowdrive-resend-credentials, key:api_key}", skr)
+	}
+
+	// Entry 1: plain literal value flows through.
+	if env[1]["name"] != "HOST_DOMAIN" || env[1]["value"] != "dev.knowdrive.ai" {
+		t.Errorf("env[1] = %+v; want {name:HOST_DOMAIN, value:dev.knowdrive.ai}", env[1])
+	}
+}
+
+// ForwardedEnvVars (the legacy path) still works for the controller-
+// populated common vars (AUDIENCE / FUNCTION_* / ISSUER / etc.). Those
+// are not secrets and need name+value forwarding via os.Getenv.
+func TestBuildContainerEnv_ForwardedVarsFromGetenv(t *testing.T) {
+	cfg := &EnvConfig{ForwardedEnvVars: "AUDIENCE,FUNCTION_NAME, , FUNCTION_NAMESPACE"}
+	env, err := buildContainerEnv(cfg, func(name string) string {
+		return map[string]string{
+			"AUDIENCE":           "http://x.svc",
+			"FUNCTION_NAME":      "fn",
+			"FUNCTION_NAMESPACE": "ns",
+		}[name]
+	})
+	if err != nil {
+		t.Fatalf("buildContainerEnv: %v", err)
+	}
+	// Empty entry in the comma list (between FUNCTION_NAME and FUNCTION_NAMESPACE)
+	// is skipped, so 3 entries not 4.
+	if len(env) != 3 {
+		t.Fatalf("env len = %d; want 3 (empty entry should be skipped)", len(env))
+	}
+	want := []map[string]any{
+		{"name": "AUDIENCE", "value": "http://x.svc"},
+		{"name": "FUNCTION_NAME", "value": "fn"},
+		{"name": "FUNCTION_NAMESPACE", "value": "ns"},
+	}
+	for i, w := range want {
+		if env[i]["name"] != w["name"] || env[i]["value"] != w["value"] {
+			t.Errorf("env[%d] = %+v; want %+v", i, env[i], w)
+		}
+	}
+}
+
+// Both layers compose: forwarded common vars first, then user env splat
+// after. Order matters because Kubernetes resolves env-var
+// references positionally (later entries can reference earlier names).
+func TestBuildContainerEnv_BothLayersInOrder(t *testing.T) {
+	cfg := &EnvConfig{
+		ForwardedEnvVars: "AUDIENCE",
+		FunctionUserEnv:  `[{"name":"RESEND_API_KEY","valueFrom":{"secretKeyRef":{"name":"s","key":"k"}}}]`,
+	}
+	env, err := buildContainerEnv(cfg, func(string) string { return "http://x" })
+	if err != nil {
+		t.Fatalf("buildContainerEnv: %v", err)
+	}
+	if len(env) != 2 || env[0]["name"] != "AUDIENCE" || env[1]["name"] != "RESEND_API_KEY" {
+		t.Errorf("expected [AUDIENCE, RESEND_API_KEY]; got %+v", env)
+	}
+}
+
+// Malformed FUNCTION_USER_ENV must error (don't silently drop user env -
+// the caller should see the misconfiguration and fail the deploy Job).
+func TestBuildContainerEnv_MalformedUserEnvErrors(t *testing.T) {
+	cfg := &EnvConfig{FunctionUserEnv: `not-valid-json`}
+	if _, err := buildContainerEnv(cfg, func(string) string { return "" }); err == nil {
+		t.Fatal("expected error on malformed FUNCTION_USER_ENV; got nil")
+	}
+}
+
+// FUNCTION_USER_ENV carries the function CR's spec.env block opaquely
+// (JSON-marshaled []corev1.EnvVar) so valueFrom.secretKeyRef shape
+// survives the host-manager -> deployer-Job -> knative-deployer boundary.
+// This test pins that LoadEnv reads it verbatim; the JSON unmarshal +
+// containerEnv splice happens later in runDeploy.
+func TestLoadEnv_FunctionUserEnv(t *testing.T) {
+	t.Cleanup(func() { os.Clearenv() })
+	os.Clearenv()
+	_ = os.Setenv("FUNCTION_NAME", "myfunc")
+	_ = os.Setenv("FUNCTION_NAMESPACE", "myns")
+
+	cfg, err := LoadEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.FunctionUserEnv != "" {
+		t.Errorf("expected empty FunctionUserEnv when env unset; got %q", cfg.FunctionUserEnv)
+	}
+
+	userEnv := `[{"name":"RESEND_API_KEY","valueFrom":{"secretKeyRef":{"name":"knowdrive-resend-credentials","key":"api_key"}}},{"name":"HOST_DOMAIN","value":"dev.knowdrive.ai"}]`
+	_ = os.Setenv("FUNCTION_USER_ENV", userEnv)
+	cfg, err = LoadEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.FunctionUserEnv != userEnv {
+		t.Errorf("FunctionUserEnv = %q; want %q", cfg.FunctionUserEnv, userEnv)
+	}
+}
+
 func TestParseKnativeStatus(t *testing.T) {
 	obj := &unstructured.Unstructured{
 		Object: map[string]any{},
