@@ -70,7 +70,7 @@ spec:
       image: {{ printf "%s:%s" .Values.generatorGit.image.repository .Values.generatorGit.image.tag | quote }}
       committerEmail: {{ .Values.generatorGit.committerEmail | quote }}
       committerName: {{ .Values.generatorGit.committerName | quote }}
-    image: ghcr.io/kdex-tech/fngogen:0.1.6
+    image: ghcr.io/kdex-tech/fngogen:0.1.7
     language: go
   - entrypoint: "./src/main.ts"
     git:
