@@ -434,3 +434,69 @@ func TestBuildKnativeService_NoScalingProducesNoTemplateAnnotations(t *testing.T
 		t.Errorf("spec.template.metadata.annotations should be absent when no SCALING_* env is set; got %#v", tmplMeta["annotations"])
 	}
 }
+
+// TestBuildKnativeService_AlwaysEmitsServiceMetadataAnnotations pins a
+// regression for the SSA ownership shape on the Service object's
+// metadata.annotations field.
+//
+// Pre-v0.1.23 always called service.SetAnnotations(annotations) — which
+// writes metadata.annotations to either a populated map (when SCALING_*
+// envs were set) OR an empty map literal {} (when they weren't). Either
+// way, the SSA apply CLAIMED structural ownership of metadata.annotations
+// under the "kdex-knative-deployer" field manager.
+//
+// v0.1.23's refactor stopped touching Service-level annotations entirely.
+// When functions had no scaling block, the marshaled JSON omitted the
+// metadata.annotations field entirely. With Force=true SSA, the apiserver
+// then interpreted the missing field as the deployer releasing ownership
+// of metadata.annotations — and Knative's mutating webhook (which had
+// stamped serving.knative.dev/{creator,lastModifier} on those previously
+// deployer-owned annotations) rejected the apply:
+//
+//	admission webhook "validation.webhook.serving.knative.dev" denied:
+//	annotation value is immutable: metadata.annotations.serving.knative.dev/creator
+//	invalid value: : metadata.annotations.serving.knative.dev/lastModifier
+//
+// Symptom on the cluster: every deployer Job for a function WITHOUT a
+// scaling block (user-service-{profile,auth,admin}) BackoffLimitExceeded
+// at v0.1.23. Functions WITH a scaling block were unaffected because
+// their template annotations map kept the structural claim alive.
+//
+// Fix: always emit metadata.annotations as a (possibly empty) map so
+// the SSA structural ownership shape matches what v0.1.22 was doing.
+// This way Knative's webhook keeps its serving.knative.dev/* keys
+// undisturbed and re-applies of unchanged Services no-op.
+func TestBuildKnativeService_AlwaysEmitsServiceMetadataAnnotations(t *testing.T) {
+	cfg := &EnvConfig{
+		FunctionName:       "myfunc",
+		FunctionNamespace:  "myns",
+		FunctionGeneration: "1",
+		// Intentionally no SCALING_* envs — this is the user-service-*
+		// shape that broke at v0.1.23.
+	}
+	podSpec := map[string]any{
+		"containers": []map[string]any{{"image": "myimg"}},
+	}
+
+	svc := buildKnativeService(cfg, podSpec)
+
+	meta, ok := svc.Object["metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("metadata missing or wrong type: %#v", svc.Object["metadata"])
+	}
+	annosRaw, present := meta["annotations"]
+	if !present {
+		t.Fatalf("metadata.annotations key absent; SSA needs the structural shape preserved (Knative webhook rejects re-applies otherwise). Got metadata = %#v", meta)
+	}
+	annos, ok := annosRaw.(map[string]string)
+	if !ok {
+		t.Fatalf("metadata.annotations wrong type: %#v", annosRaw)
+	}
+	// No autoscaling annotations should be here — those go under the
+	// Revision template (the original #4 fix).
+	for k := range annos {
+		if strings.HasPrefix(k, "autoscaling.knative.dev/") {
+			t.Errorf("autoscaling key %q on Service metadata.annotations; must live under spec.template.metadata.annotations", k)
+		}
+	}
+}

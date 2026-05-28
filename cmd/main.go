@@ -207,7 +207,16 @@ func scalingAnnotations(cfg *EnvConfig) map[string]string {
 //
 //	autoscaling annotations must be put under "spec.template.metadata.annotations" to work
 //
-// Extracted from runDeploy for kdex-tech/knative-deployer#4.
+// The Service-level metadata.annotations map is ALWAYS emitted as a
+// (possibly empty) map. This preserves the SSA structural-ownership
+// shape that pre-v0.1.23 maintained via service.SetAnnotations(...),
+// without which Knative's webhook rejects re-applies because it interprets
+// the missing map as the deployer trying to clear the
+// serving.knative.dev/{creator,lastModifier} audit annotations it had
+// previously stamped within deployer-owned map structure.
+//
+// Extracted from runDeploy for kdex-tech/knative-deployer#4; the
+// always-emit-annotations safety net is the follow-on regression fix.
 func buildKnativeService(cfg *EnvConfig, podSpec map[string]any) *unstructured.Unstructured {
 	templateMeta := map[string]any{
 		"labels": map[string]any{
@@ -230,6 +239,9 @@ func buildKnativeService(cfg *EnvConfig, podSpec map[string]any) *unstructured.U
 					"kdex.dev/function":   cfg.FunctionName,
 					"kdex.dev/generation": cfg.FunctionGeneration,
 				},
+				// Empty placeholder to preserve SSA structural ownership of
+				// metadata.annotations. See doc comment above.
+				"annotations": map[string]string{},
 			},
 			"spec": map[string]any{
 				"template": map[string]any{
