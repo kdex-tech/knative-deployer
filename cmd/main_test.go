@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -346,5 +347,90 @@ func TestWriteTerminationMessage(t *testing.T) {
 	b, _ := os.ReadFile(f.Name())
 	if string(b) != `{"url":"http://foo.bar"}` {
 		t.Errorf("Unexpected output: %s", string(b))
+	}
+}
+
+// Knative's validation webhook rejects autoscaling.knative.dev/* annotations
+// placed on the Service's metadata.annotations:
+//
+//	autoscaling annotations must be put under "spec.template.metadata.annotations" to work
+//
+// buildKnativeService MUST emit them under the Revision template's metadata.
+// Regression coverage for kdex-tech/knative-deployer#4.
+func TestBuildKnativeService_ScalingAnnotationsOnTemplateMetadata(t *testing.T) {
+	cfg := &EnvConfig{
+		FunctionName:       "myfunc",
+		FunctionNamespace:  "myns",
+		FunctionGeneration: "1",
+		ScalingMinScale:    "1",
+		ScalingTarget:      "100",
+	}
+	podSpec := map[string]any{
+		"containers": []map[string]any{{"image": "myimg"}},
+	}
+
+	svc := buildKnativeService(cfg, podSpec)
+
+	// Autoscaling annotations must be on the Revision template's metadata.
+	spec, ok := svc.Object["spec"].(map[string]any)
+	if !ok {
+		t.Fatalf("spec missing or wrong type: %#v", svc.Object["spec"])
+	}
+	tmpl, ok := spec["template"].(map[string]any)
+	if !ok {
+		t.Fatalf("spec.template missing or wrong type: %#v", spec["template"])
+	}
+	tmplMeta, ok := tmpl["metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("spec.template.metadata missing or wrong type: %#v", tmpl["metadata"])
+	}
+	tmplAnnos, ok := tmplMeta["annotations"].(map[string]string)
+	if !ok {
+		t.Fatalf("spec.template.metadata.annotations missing or wrong type: %#v", tmplMeta["annotations"])
+	}
+	if got := tmplAnnos["autoscaling.knative.dev/min-scale"]; got != "1" {
+		t.Errorf("spec.template.metadata.annotations[\"autoscaling.knative.dev/min-scale\"] = %q, want %q", got, "1")
+	}
+	if got := tmplAnnos["autoscaling.knative.dev/target"]; got != "100" {
+		t.Errorf("spec.template.metadata.annotations[\"autoscaling.knative.dev/target\"] = %q, want %q", got, "100")
+	}
+
+	// And NOT on the Service's metadata.annotations — Knative's webhook
+	// rejects that placement.
+	svcMeta, ok := svc.Object["metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("metadata missing or wrong type: %#v", svc.Object["metadata"])
+	}
+	if svcAnnos, present := svcMeta["annotations"]; present {
+		annoMap, ok := svcAnnos.(map[string]string)
+		if !ok {
+			t.Fatalf("metadata.annotations wrong type: %#v", svcAnnos)
+		}
+		for k := range annoMap {
+			if strings.HasPrefix(k, "autoscaling.knative.dev/") {
+				t.Errorf("autoscaling key %q on Service metadata.annotations; must live under spec.template.metadata.annotations (Knative webhook will reject)", k)
+			}
+		}
+	}
+}
+
+// When the CR carries no scaling block at all, buildKnativeService must omit
+// the annotations key entirely — empty maps would still serialize and may
+// confuse downstream readers that probe for presence.
+func TestBuildKnativeService_NoScalingProducesNoTemplateAnnotations(t *testing.T) {
+	cfg := &EnvConfig{
+		FunctionName:       "myfunc",
+		FunctionNamespace:  "myns",
+		FunctionGeneration: "1",
+	}
+	podSpec := map[string]any{
+		"containers": []map[string]any{{"image": "myimg"}},
+	}
+
+	svc := buildKnativeService(cfg, podSpec)
+
+	tmplMeta := svc.Object["spec"].(map[string]any)["template"].(map[string]any)["metadata"].(map[string]any)
+	if _, present := tmplMeta["annotations"]; present {
+		t.Errorf("spec.template.metadata.annotations should be absent when no SCALING_* env is set; got %#v", tmplMeta["annotations"])
 	}
 }

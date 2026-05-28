@@ -153,6 +153,94 @@ func buildContainerEnv(cfg *EnvConfig, getenv func(string) string) ([]map[string
 	return containerEnv, nil
 }
 
+// scalingAnnotations builds the autoscaling.knative.dev/* annotation map from
+// the SCALING_* env vars host-manager forwards. Empty cfg fields are skipped,
+// so a returned len(0) map signals "no scaling block was set on the CR" and
+// callers should omit the annotations key entirely.
+func scalingAnnotations(cfg *EnvConfig) map[string]string {
+	annotations := map[string]string{}
+	if cfg.ScalingActivationScale != "" {
+		annotations["autoscaling.knative.dev/activation-scale"] = cfg.ScalingActivationScale
+	}
+	if cfg.ScalingInitialScale != "" {
+		annotations["autoscaling.knative.dev/initial-scale"] = cfg.ScalingInitialScale
+	}
+	if cfg.ScalingMaxScale != "" {
+		annotations["autoscaling.knative.dev/max-scale"] = cfg.ScalingMaxScale
+	}
+	if cfg.ScalingMetric != "" {
+		annotations["autoscaling.knative.dev/metric"] = cfg.ScalingMetric
+	}
+	if cfg.ScalingMinScale != "" {
+		annotations["autoscaling.knative.dev/min-scale"] = cfg.ScalingMinScale
+	}
+	if cfg.ScalingPanicThresholdPercentage != "" {
+		annotations["autoscaling.knative.dev/panic-threshold-percentage"] = cfg.ScalingPanicThresholdPercentage
+	}
+	if cfg.ScalingPanicWindowPercentage != "" {
+		annotations["autoscaling.knative.dev/panic-window-percentage"] = cfg.ScalingPanicWindowPercentage
+	}
+	if cfg.ScalingScaleDownDelay != "" {
+		annotations["autoscaling.knative.dev/scale-down-delay"] = cfg.ScalingScaleDownDelay
+	}
+	if cfg.ScalingScaleToZeroPodRetentionPeriod != "" {
+		annotations["autoscaling.knative.dev/scale-to-zero-pod-retention-period"] = cfg.ScalingScaleToZeroPodRetentionPeriod
+	}
+	if cfg.ScalingTarget != "" {
+		annotations["autoscaling.knative.dev/target"] = cfg.ScalingTarget
+	}
+	if cfg.ScalingTargetUtilizationPercentage != "" {
+		annotations["autoscaling.knative.dev/target-utilization-percentage"] = cfg.ScalingTargetUtilizationPercentage
+	}
+	if cfg.ScalingStableWindow != "" {
+		annotations["autoscaling.knative.dev/window"] = cfg.ScalingStableWindow
+	}
+	return annotations
+}
+
+// buildKnativeService constructs the serving.knative.dev/v1 Service object
+// that runDeploy will SSA-apply. Pure function — no I/O — for unit testability.
+//
+// Annotation placement: autoscaling.knative.dev/* annotations live on
+// spec.template.metadata.annotations (the Revision template). Knative's
+// validation webhook rejects them anywhere else:
+//
+//	autoscaling annotations must be put under "spec.template.metadata.annotations" to work
+//
+// Extracted from runDeploy for kdex-tech/knative-deployer#4.
+func buildKnativeService(cfg *EnvConfig, podSpec map[string]any) *unstructured.Unstructured {
+	templateMeta := map[string]any{
+		"labels": map[string]any{
+			"kdex.dev/function":   cfg.FunctionName,
+			"kdex.dev/generation": cfg.FunctionGeneration,
+		},
+	}
+	if annotations := scalingAnnotations(cfg); len(annotations) > 0 {
+		templateMeta["annotations"] = annotations
+	}
+
+	return &unstructured.Unstructured{
+		Object: map[string]any{
+			"apiVersion": "serving.knative.dev/v1",
+			"kind":       "Service",
+			"metadata": map[string]any{
+				"name":      cfg.FunctionName,
+				"namespace": cfg.FunctionNamespace,
+				"labels": map[string]any{
+					"kdex.dev/function":   cfg.FunctionName,
+					"kdex.dev/generation": cfg.FunctionGeneration,
+				},
+			},
+			"spec": map[string]any{
+				"template": map[string]any{
+					"metadata": templateMeta,
+					"spec":     podSpec,
+				},
+			},
+		},
+	}
+}
+
 func main() {
 	cmd := "deploy"
 	if len(os.Args) > 1 {
@@ -246,72 +334,7 @@ func runDeploy() error {
 		}
 	}
 
-	service := &unstructured.Unstructured{
-		Object: map[string]any{
-			"apiVersion": "serving.knative.dev/v1",
-			"kind":       "Service",
-			"metadata": map[string]any{
-				"name":      cfg.FunctionName,
-				"namespace": cfg.FunctionNamespace,
-				"labels": map[string]any{
-					"kdex.dev/function":   cfg.FunctionName,
-					"kdex.dev/generation": cfg.FunctionGeneration,
-				},
-			},
-			"spec": map[string]any{
-				"template": map[string]any{
-					"metadata": map[string]any{
-						"labels": map[string]any{
-							"kdex.dev/function":   cfg.FunctionName,
-							"kdex.dev/generation": cfg.FunctionGeneration,
-						},
-					},
-					"spec": podSpec,
-				},
-			},
-		},
-	}
-
-	annotations := map[string]string{}
-
-	if cfg.ScalingActivationScale != "" {
-		annotations["autoscaling.knative.dev/activation-scale"] = cfg.ScalingActivationScale
-	}
-	if cfg.ScalingInitialScale != "" {
-		annotations["autoscaling.knative.dev/initial-scale"] = cfg.ScalingInitialScale
-	}
-	if cfg.ScalingMaxScale != "" {
-		annotations["autoscaling.knative.dev/max-scale"] = cfg.ScalingMaxScale
-	}
-	if cfg.ScalingMetric != "" {
-		annotations["autoscaling.knative.dev/metric"] = cfg.ScalingMetric
-	}
-	if cfg.ScalingMinScale != "" {
-		annotations["autoscaling.knative.dev/min-scale"] = cfg.ScalingMinScale
-	}
-	if cfg.ScalingPanicThresholdPercentage != "" {
-		annotations["autoscaling.knative.dev/panic-threshold-percentage"] = cfg.ScalingPanicThresholdPercentage
-	}
-	if cfg.ScalingPanicWindowPercentage != "" {
-		annotations["autoscaling.knative.dev/panic-window-percentage"] = cfg.ScalingPanicWindowPercentage
-	}
-	if cfg.ScalingScaleDownDelay != "" {
-		annotations["autoscaling.knative.dev/scale-down-delay"] = cfg.ScalingScaleDownDelay
-	}
-	if cfg.ScalingScaleToZeroPodRetentionPeriod != "" {
-		annotations["autoscaling.knative.dev/scale-to-zero-pod-retention-period"] = cfg.ScalingScaleToZeroPodRetentionPeriod
-	}
-	if cfg.ScalingTarget != "" {
-		annotations["autoscaling.knative.dev/target"] = cfg.ScalingTarget
-	}
-	if cfg.ScalingTargetUtilizationPercentage != "" {
-		annotations["autoscaling.knative.dev/target-utilization-percentage"] = cfg.ScalingTargetUtilizationPercentage
-	}
-	if cfg.ScalingStableWindow != "" {
-		annotations["autoscaling.knative.dev/window"] = cfg.ScalingStableWindow
-	}
-
-	service.SetAnnotations(annotations)
+	service := buildKnativeService(cfg, podSpec)
 
 	resourceClient := client.Resource(knativeServiceGVR).Namespace(cfg.FunctionNamespace)
 
