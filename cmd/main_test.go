@@ -253,6 +253,82 @@ func TestLoadEnv_FunctionUserEnv(t *testing.T) {
 	}
 }
 
+// TestBuildPodSpec_VolumesAndMounts pins kdex-tech/kdex-crds#10: FUNCTION_VOLUMES
+// lands on spec.template.spec.volumes and FUNCTION_VOLUME_MOUNTS lands on the
+// function container's volumeMounts, so file-based config can be projected into
+// executable/source-built functions.
+func TestBuildPodSpec_VolumesAndMounts(t *testing.T) {
+	cfg := &EnvConfig{
+		FunctionImage:        "img",
+		FunctionVolumes:      `[{"name":"cfg","secret":{"secretName":"app-cfg"}}]`,
+		FunctionVolumeMounts: `[{"name":"cfg","mountPath":"/etc/app"}]`,
+	}
+	podSpec, err := buildPodSpec(cfg, []map[string]any{})
+	if err != nil {
+		t.Fatalf("buildPodSpec: %v", err)
+	}
+
+	vols, ok := podSpec["volumes"].([]any)
+	if !ok || len(vols) != 1 {
+		t.Fatalf("podSpec.volumes = %#v; want 1 entry", podSpec["volumes"])
+	}
+	if name := vols[0].(map[string]any)["name"]; name != "cfg" {
+		t.Errorf("volumes[0].name = %v; want cfg", name)
+	}
+
+	containers := podSpec["containers"].([]map[string]any)
+	mounts, ok := containers[0]["volumeMounts"].([]any)
+	if !ok || len(mounts) != 1 {
+		t.Fatalf("containers[0].volumeMounts = %#v; want 1 entry", containers[0]["volumeMounts"])
+	}
+	if mp := mounts[0].(map[string]any)["mountPath"]; mp != "/etc/app" {
+		t.Errorf("volumeMounts[0].mountPath = %v; want /etc/app", mp)
+	}
+}
+
+// TestBuildPodSpec_NoVolumes_OmitsKeys keeps the additive path a no-op: with no
+// volumes/mounts the keys must be absent (preserves pre-#10 podspec shape).
+func TestBuildPodSpec_NoVolumes_OmitsKeys(t *testing.T) {
+	podSpec, err := buildPodSpec(&EnvConfig{FunctionImage: "img"}, []map[string]any{})
+	if err != nil {
+		t.Fatalf("buildPodSpec: %v", err)
+	}
+	if _, ok := podSpec["volumes"]; ok {
+		t.Error("podSpec.volumes present but should be omitted")
+	}
+	containers := podSpec["containers"].([]map[string]any)
+	if _, ok := containers[0]["volumeMounts"]; ok {
+		t.Error("containers[0].volumeMounts present but should be omitted")
+	}
+}
+
+// TestBuildKnativeService_InternalIsClusterLocal pins kdex-tech/kdex-crds#6:
+// FUNCTION_INTERNAL=true labels the Service networking.knative.dev/visibility=
+// cluster-local so Knative refuses external traffic to it.
+func TestBuildKnativeService_InternalIsClusterLocal(t *testing.T) {
+	cfg := &EnvConfig{FunctionName: "fn", FunctionNamespace: "dev", FunctionInternal: "true"}
+	svc := buildKnativeService(cfg, map[string]any{"containers": []map[string]any{{"image": "img"}}})
+
+	meta := svc.Object["metadata"].(map[string]any)
+	labels := meta["labels"].(map[string]any)
+	if got := labels["networking.knative.dev/visibility"]; got != "cluster-local" {
+		t.Errorf("Service label networking.knative.dev/visibility = %v; want cluster-local", got)
+	}
+}
+
+// TestBuildKnativeService_NonInternalHasNoVisibilityLabel keeps non-internal
+// functions externally reachable (no visibility label).
+func TestBuildKnativeService_NonInternalHasNoVisibilityLabel(t *testing.T) {
+	cfg := &EnvConfig{FunctionName: "fn", FunctionNamespace: "dev"}
+	svc := buildKnativeService(cfg, map[string]any{"containers": []map[string]any{{"image": "img"}}})
+
+	meta := svc.Object["metadata"].(map[string]any)
+	labels := meta["labels"].(map[string]any)
+	if _, ok := labels["networking.knative.dev/visibility"]; ok {
+		t.Error("non-internal Service must not carry the cluster-local visibility label")
+	}
+}
+
 func TestParseKnativeStatus(t *testing.T) {
 	obj := &unstructured.Unstructured{
 		Object: map[string]any{},

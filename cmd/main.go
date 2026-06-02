@@ -38,12 +38,15 @@ type EnvConfig struct {
 	FunctionGeneration                   string
 	FunctionHost                         string
 	FunctionImage                        string
+	FunctionInternal                     string
 	FunctionName                         string
 	FunctionNamespace                    string
 	FunctionNodeSelector                 string
 	FunctionServiceAccountName           string
 	FunctionTolerations                  string
 	FunctionUserEnv                      string
+	FunctionVolumeMounts                 string
+	FunctionVolumes                      string
 	Issuer                               string
 	JWKSURL                              string
 	ScalingActivationScale               string
@@ -68,12 +71,15 @@ func LoadEnv() (*EnvConfig, error) {
 		FunctionGeneration:                   os.Getenv("FUNCTION_GENERATION"),
 		FunctionHost:                         os.Getenv("FUNCTION_HOST"),
 		FunctionImage:                        os.Getenv("FUNCTION_IMAGE"),
+		FunctionInternal:                     os.Getenv("FUNCTION_INTERNAL"),
 		FunctionName:                         os.Getenv("FUNCTION_NAME"),
 		FunctionNamespace:                    os.Getenv("FUNCTION_NAMESPACE"),
 		FunctionNodeSelector:                 os.Getenv("FUNCTION_NODE_SELECTOR"),
 		FunctionServiceAccountName:           os.Getenv("FUNCTION_SERVICE_ACCOUNT_NAME"),
 		FunctionTolerations:                  os.Getenv("FUNCTION_TOLERATIONS"),
 		FunctionUserEnv:                      os.Getenv("FUNCTION_USER_ENV"),
+		FunctionVolumeMounts:                 os.Getenv("FUNCTION_VOLUME_MOUNTS"),
+		FunctionVolumes:                      os.Getenv("FUNCTION_VOLUMES"),
 		Issuer:                               os.Getenv("ISSUER"),
 		JWKSURL:                              os.Getenv("JWKS_URL"),
 		ScalingActivationScale:               os.Getenv("SCALING_ACTIVATION_SCALE"),
@@ -198,6 +204,75 @@ func scalingAnnotations(cfg *EnvConfig) map[string]string {
 	return annotations
 }
 
+// buildPodSpec assembles the Knative Revision PodSpec (spec.template.spec).
+// Pure function — no I/O — for unit testability; runDeploy passes the
+// already-built container env block.
+//
+// FUNCTION_TOLERATIONS / FUNCTION_NODE_SELECTOR steer the runtime pod onto a
+// tainted node pool (kdex-tech/knative-deployer#3). FUNCTION_VOLUMES /
+// FUNCTION_VOLUME_MOUNTS project file-based config — ConfigMap/Secret files —
+// into the runtime pod/container (kdex-tech/kdex-crds#10). All REQUIRE the
+// cluster to enable the matching Knative kubernetes.podspec-* feature flags,
+// otherwise the Knative webhook rejects the applied spec.
+func buildPodSpec(cfg *EnvConfig, containerEnv []map[string]any) (map[string]any, error) {
+	container := map[string]any{
+		"image": cfg.FunctionImage,
+		"env":   containerEnv,
+	}
+
+	if cfg.FunctionVolumeMounts != "" {
+		var volumeMounts []any
+		if err := json.Unmarshal([]byte(cfg.FunctionVolumeMounts), &volumeMounts); err != nil {
+			return nil, fmt.Errorf("unmarshal FUNCTION_VOLUME_MOUNTS: %w", err)
+		}
+		if len(volumeMounts) > 0 {
+			container["volumeMounts"] = volumeMounts
+		}
+	}
+
+	podSpec := map[string]any{
+		"containers": []map[string]any{container},
+	}
+
+	// Honor the optional FUNCTION_SERVICE_ACCOUNT_NAME so the runtime pod
+	// can run as a non-default KSA (e.g. for Workload Identity binding to a
+	// GCP service account). When empty, Knative falls back to the
+	// namespace's default ServiceAccount, preserving prior behavior.
+	if cfg.FunctionServiceAccountName != "" {
+		podSpec["serviceAccountName"] = cfg.FunctionServiceAccountName
+	}
+
+	if cfg.FunctionTolerations != "" {
+		var tolerations []any
+		if err := json.Unmarshal([]byte(cfg.FunctionTolerations), &tolerations); err != nil {
+			return nil, fmt.Errorf("unmarshal FUNCTION_TOLERATIONS: %w", err)
+		}
+		if len(tolerations) > 0 {
+			podSpec["tolerations"] = tolerations
+		}
+	}
+	if cfg.FunctionNodeSelector != "" {
+		var nodeSelector map[string]any
+		if err := json.Unmarshal([]byte(cfg.FunctionNodeSelector), &nodeSelector); err != nil {
+			return nil, fmt.Errorf("unmarshal FUNCTION_NODE_SELECTOR: %w", err)
+		}
+		if len(nodeSelector) > 0 {
+			podSpec["nodeSelector"] = nodeSelector
+		}
+	}
+	if cfg.FunctionVolumes != "" {
+		var volumes []any
+		if err := json.Unmarshal([]byte(cfg.FunctionVolumes), &volumes); err != nil {
+			return nil, fmt.Errorf("unmarshal FUNCTION_VOLUMES: %w", err)
+		}
+		if len(volumes) > 0 {
+			podSpec["volumes"] = volumes
+		}
+	}
+
+	return podSpec, nil
+}
+
 // buildKnativeService constructs the serving.knative.dev/v1 Service object
 // that runDeploy will SSA-apply. Pure function — no I/O — for unit testability.
 //
@@ -228,6 +303,19 @@ func buildKnativeService(cfg *EnvConfig, podSpec map[string]any) *unstructured.U
 		templateMeta["annotations"] = annotations
 	}
 
+	serviceLabels := map[string]any{
+		"kdex.dev/function":   cfg.FunctionName,
+		"kdex.dev/generation": cfg.FunctionGeneration,
+	}
+	// FUNCTION_INTERNAL marks the function cluster-only (kdex-tech/kdex-crds#6):
+	// the Knative networking layer refuses external traffic to a Service
+	// labeled cluster-local, so even if a host route slips through the
+	// function is unreachable from outside the cluster. In-cluster callers
+	// still reach it at <name>.<namespace>.svc.cluster.local.
+	if cfg.FunctionInternal == "true" {
+		serviceLabels["networking.knative.dev/visibility"] = "cluster-local"
+	}
+
 	return &unstructured.Unstructured{
 		Object: map[string]any{
 			"apiVersion": "serving.knative.dev/v1",
@@ -235,10 +323,7 @@ func buildKnativeService(cfg *EnvConfig, podSpec map[string]any) *unstructured.U
 			"metadata": map[string]any{
 				"name":      cfg.FunctionName,
 				"namespace": cfg.FunctionNamespace,
-				"labels": map[string]any{
-					"kdex.dev/function":   cfg.FunctionName,
-					"kdex.dev/generation": cfg.FunctionGeneration,
-				},
+				"labels":    serviceLabels,
 				// Empty placeholder to preserve SSA structural ownership of
 				// metadata.annotations. See doc comment above.
 				"annotations": map[string]string{},
@@ -304,46 +389,9 @@ func runDeploy() error {
 		return err
 	}
 
-	// Prepare Knative Service definition
-	podSpec := map[string]any{
-		"containers": []map[string]any{
-			{
-				"image": cfg.FunctionImage,
-				"env":   containerEnv,
-			},
-		},
-	}
-	// Honor the optional FUNCTION_SERVICE_ACCOUNT_NAME so the runtime pod
-	// can run as a non-default KSA (e.g. for Workload Identity binding to a
-	// GCP service account). When empty, Knative falls back to the
-	// namespace's default ServiceAccount, preserving prior behavior.
-	if cfg.FunctionServiceAccountName != "" {
-		podSpec["serviceAccountName"] = cfg.FunctionServiceAccountName
-	}
-
-	// FUNCTION_TOLERATIONS / FUNCTION_NODE_SELECTOR steer the runtime
-	// pod onto a tainted node pool (kdex-tech/knative-deployer#3,
-	// paired with kdex-crds#7 + kdex-host-manager#23). REQUIRES the
-	// cluster to enable Knative's kubernetes.podspec-tolerations +
-	// kubernetes.podspec-nodeselector feature flags, otherwise the
-	// Knative webhook will reject the spec we apply below.
-	if cfg.FunctionTolerations != "" {
-		var tolerations []any
-		if err := json.Unmarshal([]byte(cfg.FunctionTolerations), &tolerations); err != nil {
-			return fmt.Errorf("unmarshal FUNCTION_TOLERATIONS: %w", err)
-		}
-		if len(tolerations) > 0 {
-			podSpec["tolerations"] = tolerations
-		}
-	}
-	if cfg.FunctionNodeSelector != "" {
-		var nodeSelector map[string]any
-		if err := json.Unmarshal([]byte(cfg.FunctionNodeSelector), &nodeSelector); err != nil {
-			return fmt.Errorf("unmarshal FUNCTION_NODE_SELECTOR: %w", err)
-		}
-		if len(nodeSelector) > 0 {
-			podSpec["nodeSelector"] = nodeSelector
-		}
+	podSpec, err := buildPodSpec(cfg, containerEnv)
+	if err != nil {
+		return err
 	}
 
 	service := buildKnativeService(cfg, podSpec)
