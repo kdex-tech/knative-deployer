@@ -18,6 +18,14 @@ spec:
     command: ["/deployer", "observe"]
     schedule: "*/5 * * * *"
     serviceAccountName: {{ include "kdex-knative-faas-adaptor.serviceAccountName" . }}
+    {{- with .Values.observer.nodeSelector }}
+    nodeSelector:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with .Values.observer.tolerations }}
+    tolerations:
+      {{- toYaml . | nindent 4 }}
+    {{- end }}
   defaultBuilderGenerator: tiny/go
   builders:
   - builderRef:

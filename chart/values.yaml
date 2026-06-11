@@ -59,6 +59,22 @@ generatorGit:
   committerEmail: test@kdex.dev
   committerName: KDex Codegen Bot
 
+# Observer Job pod placement applied to the KDexClusterFaaSAdaptor's
+# observer block. host-manager forwards these onto the per-function
+# observer CronJob's PodSpec (host-manager v0.2.103+ wire-up,
+# kdex-crds v0.14.224+ schema). When empty the observer Job lands
+# wherever the scheduler picks — typically the only untainted amd64
+# pool the cluster has, which on some deployments is a dedicated
+# kpack-build pool that should be free to scale to zero in quiet
+# periods. Setting a per-cluster nodeSelector + matching tolerations
+# steers the every-5-min observer ticks to the operator-chosen pool.
+observer:
+  # Map of node labels the observer Job pods must match.
+  nodeSelector: {}
+  # List of tolerations to apply to observer Job pods. Pair with
+  # nodeSelector when steering to a tainted node pool.
+  tolerations: []
+
 # Builder configuration applied to every entry in the
 # KDexClusterFaaSAdaptor's builders list. host-manager stamps these
 # onto the per-function kpack.io/Image's spec.* when the function is
