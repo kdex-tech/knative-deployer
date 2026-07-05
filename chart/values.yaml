@@ -131,6 +131,14 @@ builders:
 # Disable when kpack is managed externally.
 kpack:
   enabled: true
+  # Enable kpack's experimental subpath filtering (kpack >= v0.17.2): for an
+  # Image whose git revision is a BRANCH (not a pinned SHA) with subPath set,
+  # kpack only cuts a new Build when files under subPath change (in-memory
+  # shallow clone + git ls-tree hash compare). Lets a content change in a
+  # hand-authored / local-codegen KDexFunction source trigger a rebuild with
+  # no in-cluster codegen. Dormant for SHA-pinned and service-backed
+  # functions. See kpack docs/subpath_filtering.md.
+  gitResolverUseShallowClone: false
   builder:
     tag: "latest"
   # Scheduling for kpack-controller and kpack-webhook. nodeSelector
