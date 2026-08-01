@@ -96,8 +96,19 @@ func LoadEnv() (*EnvConfig, error) {
 		ScalingTargetUtilizationPercentage:   os.Getenv("SCALING_TARGET_UTILIZATION_PERCENTAGE"),
 	}
 
+	isObserve := len(os.Args) > 1 && os.Args[1] == "observe"
+
+	// The per-host observer CronJob covers many functions, so it has no single
+	// FUNCTION_NAME -- it identifies its set with FUNCTION_HOST instead. Every
+	// other mode (and the legacy per-function observer) still requires a name.
+	// See kdex-tech/host-manager#156.
 	if cfg.FunctionName == "" {
-		return nil, fmt.Errorf("FUNCTION_NAME is required")
+		if !isObserve {
+			return nil, fmt.Errorf("FUNCTION_NAME is required")
+		}
+		if cfg.FunctionHost == "" {
+			return nil, fmt.Errorf("observe requires FUNCTION_NAME (single function) or FUNCTION_HOST (per-host)")
+		}
 	}
 	if cfg.FunctionNamespace == "" {
 		return nil, fmt.Errorf("FUNCTION_NAMESPACE is required")
@@ -433,6 +444,50 @@ func runDeploy() error {
 	return nil
 }
 
+// ObservedByLabel marks a KDexFunction as belonging to a host's observer set.
+// host-manager stamps it with the host name when it provisions the per-host
+// observer CronJob; this observer lists by it to find its work.
+//
+// Making the set explicit (rather than "every function in the namespace") keeps
+// the previous semantics: only adaptor-deployed functions were ever observed --
+// service-backed ones never had an observer CronJob.
+// See kdex-tech/host-manager#156.
+const ObservedByLabel = "kdex.dev/observed-by"
+
+// observedFunctions resolves the KDexFunctions this observer pass covers.
+//
+// Two modes, so a new image can be rolled out under old per-function CronJobs
+// before host-manager switches to the per-host topology:
+//
+//   - legacy: FUNCTION_NAME set -> that single function.
+//   - per-host: FUNCTION_HOST set -> every function labelled for that host.
+func observedFunctions(
+	ctx context.Context,
+	client dynamic.Interface,
+	cfg *EnvConfig,
+) ([]unstructured.Unstructured, error) {
+	kfClient := client.Resource(kdexFunctionGVR).Namespace(cfg.FunctionNamespace)
+
+	if cfg.FunctionName != "" {
+		kfObj, err := kfClient.Get(ctx, cfg.FunctionName, metav1.GetOptions{})
+		if err != nil {
+			return nil, fmt.Errorf("failed to get kdex function: %w", err)
+		}
+		return []unstructured.Unstructured{*kfObj}, nil
+	}
+
+	selector := fmt.Sprintf("%s=%s", ObservedByLabel, cfg.FunctionHost)
+	list, err := kfClient.List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list kdex functions (%s): %w", selector, err)
+	}
+	return list.Items, nil
+}
+
+// runObserve observes every function in this pass's set. One function's failure
+// must not skip the rest -- a single un-gettable Knative Service used to abort
+// the whole CronJob, which in per-host mode would strand every other function
+// on the host.
 func runObserve() error {
 	cfg, err := LoadEnv()
 	if err != nil {
@@ -446,18 +501,64 @@ func runObserve() error {
 
 	ctx := context.Background()
 
+	functions, err := observedFunctions(ctx, client, cfg)
+	if err != nil {
+		return err
+	}
+	if len(functions) == 0 {
+		fmt.Printf("No functions to observe (host=%s, namespace=%s)\n", cfg.FunctionHost, cfg.FunctionNamespace)
+		return nil
+	}
+
+	var failures []string
+	for i := range functions {
+		kfObj := &functions[i]
+		if obsErr := observeFunction(ctx, client, kfObj, cfg); obsErr != nil {
+			fmt.Fprintf(os.Stderr, "observe %s/%s: %v\n", kfObj.GetNamespace(), kfObj.GetName(), obsErr)
+			failures = append(failures, fmt.Sprintf("%s: %v", kfObj.GetName(), obsErr))
+		}
+	}
+
+	if len(failures) > 0 {
+		return fmt.Errorf("observed %d function(s), %d failed: %s",
+			len(functions), len(failures), strings.Join(failures, "; "))
+	}
+
+	fmt.Printf("Observed %d function(s)\n", len(functions))
+	return nil
+}
+
+// observeFunction runs the original single-function observation against one
+// KDexFunction. Per-function inputs come from the CR rather than env vars,
+// since in per-host mode one CronJob covers many functions.
+func observeFunction(
+	ctx context.Context,
+	client dynamic.Interface,
+	kfObj *unstructured.Unstructured,
+	cfg *EnvConfig,
+) error {
+	name := kfObj.GetName()
+	namespace := kfObj.GetNamespace()
+
+	// basePath is per-function, so read it off the CR. Fall back to the env
+	// var for the legacy single-function CronJob, which still sets it.
+	basePath, found, _ := unstructured.NestedString(kfObj.Object, "spec", "api", "basePath")
+	if !found || basePath == "" {
+		basePath = cfg.FunctionBasePath
+	}
+
 	// 1. Get Knative Service Status. A NotFound is a normal state for
 	// brand-new functions that haven't built+deployed yet; we keep
 	// going so the kpack-Build auto-recovery check below still runs
 	// (preempted Build pods are exactly the case where the Knative
 	// Service hasn't appeared yet).
-	ksClient := client.Resource(knativeServiceGVR).Namespace(cfg.FunctionNamespace)
-	ksObj, err := ksClient.Get(ctx, cfg.FunctionName, metav1.GetOptions{})
+	ksClient := client.Resource(knativeServiceGVR).Namespace(namespace)
+	ksObj, err := ksClient.Get(ctx, name, metav1.GetOptions{})
 	ksNotFound := false
 	if err != nil {
 		if errors.IsNotFound(err) {
 			ksNotFound = true
-			fmt.Printf("Knative Service %s/%s not found (yet)\n", cfg.FunctionNamespace, cfg.FunctionName)
+			fmt.Printf("Knative Service %s/%s not found (yet)\n", namespace, name)
 		} else {
 			return fmt.Errorf("failed to get knative service: %w", err)
 		}
@@ -468,15 +569,10 @@ func runObserve() error {
 	url := ""
 	if !ksNotFound {
 		isReady, msg, url = parseKnativeStatus(ksObj)
-		fmt.Printf("Observation: Ready=%v, Msg=%s, URL=%s\n", isReady, msg, url)
+		fmt.Printf("Observation %s/%s: Ready=%v, Msg=%s, URL=%s\n", namespace, name, isReady, msg, url)
 	}
 
-	// 2. Get KDexFunction
-	kfClient := client.Resource(kdexFunctionGVR).Namespace(cfg.FunctionNamespace)
-	kfObj, err := kfClient.Get(ctx, cfg.FunctionName, metav1.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to get kdex function: %w", err)
-	}
+	kfClient := client.Resource(kdexFunctionGVR).Namespace(namespace)
 
 	// 2a. kpack Build auto-recovery. When the Knative Service isn't
 	// Ready (or doesn't exist), inspect the upstream kpack Build for a
@@ -511,7 +607,7 @@ func runObserve() error {
 	if isReady {
 		if currentState != "Ready" {
 			newState = "Ready"
-			newDetail = fmt.Sprintf("Ready: %s%s", url, cfg.FunctionBasePath)
+			newDetail = fmt.Sprintf("Ready: %s%s", url, basePath)
 			needsUpdate = true
 		}
 		if currentURL != url {
@@ -526,13 +622,13 @@ func runObserve() error {
 		if currentState == "Ready" {
 			// It was ready, now it's not.
 			newState = "FunctionDeployed" // Fallback? Or keep Ready but Degraded condition?
-			newDetail = fmt.Sprintf("NotReady: %s%s", url, cfg.FunctionBasePath)
+			newDetail = fmt.Sprintf("NotReady: %s%s", url, basePath)
 			needsUpdate = true
 		}
 	}
 
 	if needsUpdate {
-		fmt.Printf("Updating KDexFunction status: State=%s -> %s\n", currentState, newState)
+		fmt.Printf("Updating KDexFunction %s/%s status: State=%s -> %s\n", namespace, name, currentState, newState)
 
 		// Update Status
 		// Note: We should use Apply or UpdateStatus
@@ -556,7 +652,7 @@ func runObserve() error {
 		patch = specPatch
 		patchBytes, _ := json.Marshal(patch)
 
-		_, err = kfClient.Patch(context.Background(), cfg.FunctionName, types.MergePatchType, patchBytes, metav1.PatchOptions{
+		_, err = kfClient.Patch(ctx, name, types.MergePatchType, patchBytes, metav1.PatchOptions{
 			FieldManager: "kdex-knative-observer",
 		}, "status")
 		if err != nil {
