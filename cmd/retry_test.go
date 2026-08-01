@@ -360,9 +360,8 @@ func TestSetRetryState_Roundtrip(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	kf := newKDexFunction(0, time.Time{}, false)
 	client := newFakeClient(kf)
-	cfg := &EnvConfig{FunctionName: testFunc, FunctionNamespace: testNamespace}
 
-	if err := setRetryState(context.Background(), client, cfg, 1, now, false); err != nil {
+	if err := setRetryState(context.Background(), client, kf, 1, now, false); err != nil {
 		t.Fatalf("setRetryState: %v", err)
 	}
 

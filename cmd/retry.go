@@ -8,8 +8,9 @@
 // voluntary disruption therefore leaves the parent kpack.io/Image
 // permanently Ready=False.
 //
-// The observer CronJob (which already runs per-KDexFunction every
-// 5 min) is the natural watchdog. checkAndRetryFailedBuild inspects
+// The observer CronJob (which already runs every 5 min, once per host,
+// covering each of its functions) is the natural watchdog.
+// checkAndRetryFailedBuild inspects
 // the latest Build, classifies its failure mode, and on preemption
 // signals issues a bounded retry via the image.kpack.io/
 // additionalBuildNeeded annotation. Genuine failures (exit codes,
@@ -90,9 +91,17 @@ func checkAndRetryFailedBuild(
 		// Older host-manager Jobs don't set it; skip rather than guess.
 		return nil
 	}
-	imageName := cfg.FunctionHost + "-" + cfg.FunctionName
 
-	imgClient := client.Resource(kpackImageGVR).Namespace(cfg.FunctionNamespace)
+	// The function's identity comes off the CR we were handed, not off
+	// env. Under a per-host CronJob one process covers many functions,
+	// so cfg.FunctionName is empty -- reading it here computed the image
+	// name "<host>-", which 404s and made auto-recovery a silent no-op
+	// for every function on the host.
+	name := kfObj.GetName()
+	namespace := kfObj.GetNamespace()
+	imageName := cfg.FunctionHost + "-" + name
+
+	imgClient := client.Resource(kpackImageGVR).Namespace(namespace)
 	img, err := imgClient.Get(ctx, imageName, metav1.GetOptions{})
 	if err != nil {
 		if kerrors.IsNotFound(err) {
@@ -105,7 +114,7 @@ func checkAndRetryFailedBuild(
 	// (genuine progress wipes the budget for the next preemption).
 	latestImage, _, _ := unstructured.NestedString(img.Object, "status", "latestImage")
 	if latestImage != "" {
-		return resetRetryStateIfSet(ctx, client, kfObj, cfg)
+		return resetRetryStateIfSet(ctx, client, kfObj)
 	}
 
 	latestBuildRef, _, _ := unstructured.NestedString(img.Object, "status", "latestBuildRef")
@@ -113,7 +122,7 @@ func checkAndRetryFailedBuild(
 		return nil
 	}
 
-	buildClient := client.Resource(kpackBuildGVR).Namespace(cfg.FunctionNamespace)
+	buildClient := client.Resource(kpackBuildGVR).Namespace(namespace)
 	build, err := buildClient.Get(ctx, latestBuildRef, metav1.GetOptions{})
 	if err != nil {
 		if kerrors.IsNotFound(err) {
@@ -126,7 +135,7 @@ func checkAndRetryFailedBuild(
 		return nil
 	}
 
-	preempted, err := isBuildPodPreempted(ctx, client, build, cfg.FunctionNamespace)
+	preempted, err := isBuildPodPreempted(ctx, client, build, namespace)
 	if err != nil {
 		// Conservative: log-and-skip instead of looping on a transient
 		// API hiccup. The next observe tick re-evaluates.
@@ -148,7 +157,7 @@ func checkAndRetryFailedBuild(
 
 	if retries >= maxRetries {
 		fmt.Printf("Build preemption budget exhausted (%d retries); marking exhausted\n", retries)
-		return setRetryState(ctx, client, cfg, retries, lastRetryAt, true)
+		return setRetryState(ctx, client, kfObj, retries, lastRetryAt, true)
 	}
 	if !lastRetryAt.IsZero() && time.Since(lastRetryAt) < cooldown {
 		return nil
@@ -159,7 +168,7 @@ func checkAndRetryFailedBuild(
 		return fmt.Errorf("trigger image rebuild: %w", err)
 	}
 	fmt.Printf("Preempted Build %s; triggered retry %d/%d\n", build.GetName(), retries+1, maxRetries)
-	return setRetryState(ctx, client, cfg, retries+1, now, false)
+	return setRetryState(ctx, client, kfObj, retries+1, now, false)
 }
 
 // buildFailed returns true when the kpack Build's Succeeded condition
@@ -369,10 +378,13 @@ func getRetryState(kfObj *unstructured.Unstructured) (retries int, lastRetryAt t
 // setRetryState patches the KDexFunction's status.attributes with the
 // three bookkeeping keys. Uses merge-patch so other attribute writers
 // (host-manager itself emits attributes too) don't get clobbered.
+//
+// Targets the passed CR rather than env: under a per-host CronJob there
+// is no single cfg.FunctionName to patch.
 func setRetryState(
 	ctx context.Context,
 	client dynamic.Interface,
-	cfg *EnvConfig,
+	kfObj *unstructured.Unstructured,
 	retries int,
 	lastRetryAt time.Time,
 	exhausted bool,
@@ -395,8 +407,8 @@ func setRetryState(
 	if err != nil {
 		return err
 	}
-	kfClient := client.Resource(kdexFunctionGVR).Namespace(cfg.FunctionNamespace)
-	_, err = kfClient.Patch(ctx, cfg.FunctionName, types.MergePatchType, body, metav1.PatchOptions{
+	kfClient := client.Resource(kdexFunctionGVR).Namespace(kfObj.GetNamespace())
+	_, err = kfClient.Patch(ctx, kfObj.GetName(), types.MergePatchType, body, metav1.PatchOptions{
 		FieldManager: "kdex-knative-observer",
 	}, "status")
 	return err
@@ -409,7 +421,6 @@ func resetRetryStateIfSet(
 	ctx context.Context,
 	client dynamic.Interface,
 	kfObj *unstructured.Unstructured,
-	cfg *EnvConfig,
 ) error {
 	retries, lastRetryAt, exhausted := getRetryState(kfObj)
 	if retries == 0 && lastRetryAt.IsZero() && !exhausted {
@@ -429,8 +440,8 @@ func resetRetryStateIfSet(
 	if err != nil {
 		return err
 	}
-	kfClient := client.Resource(kdexFunctionGVR).Namespace(cfg.FunctionNamespace)
-	_, err = kfClient.Patch(ctx, cfg.FunctionName, types.MergePatchType, body, metav1.PatchOptions{
+	kfClient := client.Resource(kdexFunctionGVR).Namespace(kfObj.GetNamespace())
+	_, err = kfClient.Patch(ctx, kfObj.GetName(), types.MergePatchType, body, metav1.PatchOptions{
 		FieldManager: "kdex-knative-observer",
 	}, "status")
 	return err
