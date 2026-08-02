@@ -510,21 +510,74 @@ func runObserve() error {
 		return nil
 	}
 
-	var failures []string
+	return observePass(ctx, client, functions, cfg, time.Now())
+}
+
+// observePass observes a resolved set of functions and decides the pass's exit
+// status. Split out of runObserve, which reads env and builds a client itself,
+// so the loop's no-fail-fast behaviour and the #9 exit-code contract are
+// testable against a fake client rather than only reasoned about.
+func observePass(
+	ctx context.Context,
+	client dynamic.Interface,
+	functions []unstructured.Unstructured,
+	cfg *EnvConfig,
+	now time.Time,
+) error {
+	outcome := observeOutcome{Observed: len(functions)}
+
 	for i := range functions {
 		kfObj := &functions[i]
-		if obsErr := observeFunction(ctx, client, kfObj, cfg); obsErr != nil {
-			fmt.Fprintf(os.Stderr, "observe %s/%s: %v\n", kfObj.GetNamespace(), kfObj.GetName(), obsErr)
-			failures = append(failures, fmt.Sprintf("%s: %v", kfObj.GetName(), obsErr))
+		ns, name := kfObj.GetNamespace(), kfObj.GetName()
+
+		obsErr := observeFunction(ctx, client, kfObj, cfg)
+		if obsErr == nil {
+			// Recovered (or never failed) -- drop any stale failure so the
+			// function doesn't look broken forever. No-op when nothing is set.
+			if clearErr := clearObserveFailure(ctx, client, kfObj); clearErr != nil && !errors.IsNotFound(clearErr) {
+				// Not fatal: the pass observed this function fine. But a stale
+				// error left behind is exactly the "looks broken forever"
+				// failure mode, so say so loudly.
+				fmt.Fprintf(os.Stderr, "observe %s/%s: succeeded but failed to clear stale failure: %v\n",
+					ns, name, clearErr)
+			}
+			continue
+		}
+
+		outcome.Failed++
+		fmt.Fprintf(os.Stderr, "observe %s/%s: %v\n", ns, name, obsErr)
+
+		recErr := recordObserveFailure(ctx, client, kfObj, obsErr, now)
+		switch {
+		case recErr == nil:
+		case errors.IsNotFound(recErr):
+			// Deleted between listing and patching. Nothing to attribute to.
+			fmt.Fprintf(os.Stderr, "observe %s/%s: gone before its failure could be recorded\n", ns, name)
+		default:
+			outcome.Unrecorded = append(outcome.Unrecorded,
+				fmt.Sprintf("%s/%s: %v", ns, name, recErr))
+			fmt.Fprintf(os.Stderr, "observe %s/%s: FAILED TO RECORD failure on status: %v\n", ns, name, recErr)
 		}
 	}
 
-	if len(failures) > 0 {
-		return fmt.Errorf("observed %d function(s), %d failed: %s",
-			len(functions), len(failures), strings.Join(failures, "; "))
+	fmt.Printf("%s\n", outcome.summary())
+
+	// Exit code reflects the LOOP, not the functions (kdex-tech/knative-deployer#9).
+	//
+	// A per-function failure is now recorded on that function's own status, so
+	// it is queryable without log archaeology and does not need the Job's exit
+	// code to carry it. Failing the Job for it would mean one persistently
+	// broken function marks every run red until operators stop reading the
+	// signal -- which is the state this replaces.
+	//
+	// The one exception is a failure we could not record: exiting zero is only
+	// safe while every failure lands somewhere durable, so losing that makes it
+	// a real, actionable Job failure.
+	if len(outcome.Unrecorded) > 0 {
+		return fmt.Errorf("%s; %d failure(s) could not be recorded on their function's status: %s",
+			outcome.summary(), len(outcome.Unrecorded), strings.Join(outcome.Unrecorded, "; "))
 	}
 
-	fmt.Printf("Observed %d function(s)\n", len(functions))
 	return nil
 }
 
