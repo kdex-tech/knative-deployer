@@ -127,6 +127,35 @@ builders:
   cache:
     volumeSize: "10Gi"
 
+  # nodeSelector is forwarded onto the kpack.io/Image's
+  # spec.build.nodeSelector. Use to pin BUILD pods to a specific node
+  # pool when more than one pool can satisfy the build's architecture
+  # requirement. Empty map leaves BUILD pod placement to the scheduler.
+  nodeSelector: {}
+
+  # tolerations are forwarded onto the kpack.io/Image's
+  # spec.build.tolerations, which kpack passes onto the per-build Pod.
+  # Use to land BUILD pods on a TAINTED node pool -- most usefully a
+  # preemptible/Spot pool, since a buildpack build is a short-lived
+  # batch job whose worst case on preemption is a retry.
+  #
+  # Without this, a Spot pool silently rejects build pods at schedule
+  # time (they sit Pending, they do not fail), so the build pool has to
+  # stay on-demand AND untainted -- which also makes it the sink for
+  # every other unpinned pod in the cluster.
+  #
+  # GKE Spot example (the taint is auto-applied by GKE):
+  #   tolerations:
+  #   - key: cloud.google.com/gke-spot
+  #     operator: Equal
+  #     value: "true"
+  #     effect: NoSchedule
+  #
+  # Mirrors observer.tolerations above. Requires kdex-crds with the
+  # Builder.Tolerations/NodeSelector fields and host-manager v0.2.55+,
+  # which forwards them onto spec.build.*.
+  tolerations: []
+
 # Install the bundled kpack release (CRDs + controllers + ClusterBuilders).
 # Disable when kpack is managed externally.
 kpack:
