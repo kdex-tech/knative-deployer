@@ -50,6 +50,14 @@ spec:
     cache:
       {{- toYaml . | nindent 6 }}
     {{- end }}
+    {{- with .Values.builders.nodeSelector }}
+    nodeSelector:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with .Values.builders.tolerations }}
+    tolerations:
+      {{- toYaml . | nindent 4 }}
+    {{- end }}
   - builderRef:
       kind: ClusterBuilder
       name: base-builder
@@ -71,6 +79,14 @@ spec:
     {{- with .Values.builders.cache }}
     cache:
       {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with .Values.builders.nodeSelector }}
+    nodeSelector:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with .Values.builders.tolerations }}
+    tolerations:
+      {{- toYaml . | nindent 4 }}
     {{- end }}
   generators:
   - entrypoint: "./cmd/main.go"
