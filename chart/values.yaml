@@ -75,6 +75,27 @@ observer:
   # nodeSelector when steering to a tainted node pool.
   tolerations: []
 
+# Deployer JOB pod placement applied to the KDexClusterFaaSAdaptor's
+# deployer block. host-manager forwards these onto the per-function
+# deployer Job's own PodSpec (host-manager v0.4.27+ wire-up, kdex-crds
+# v0.14.236+ schema). These steer the short-lived deployer Job pod
+# ITSELF — not the Knative Service runtime pod. (Runtime-pod scheduling
+# is separate: per-function on KDexFunction.spec.{nodeSelector,
+# tolerations}, or the adaptor's deployer.{nodeSelector,tolerations}
+# which are forwarded as runtime-pod payload — hence the Job* prefix
+# here, so the two can't be confused.) Without these the deployer Job
+# can only land on an untainted pool, so a cluster that taints every
+# pool by purpose has no lever over it. Mirrors observer above; see
+# kdex-tech/host-manager#164.
+deployer:
+  # Map of node labels the deployer Job pod must match. Renders as the
+  # CRD's deployer.jobNodeSelector.
+  jobNodeSelector: {}
+  # List of tolerations to apply to the deployer Job pod. Pair with
+  # jobNodeSelector when steering to a tainted node pool. Renders as the
+  # CRD's deployer.jobTolerations.
+  jobTolerations: []
+
 # Builder configuration applied to every entry in the
 # KDexClusterFaaSAdaptor's builders list. host-manager stamps these
 # onto the per-function kpack.io/Image's spec.* when the function is

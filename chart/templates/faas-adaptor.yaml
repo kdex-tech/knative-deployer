@@ -13,6 +13,14 @@ spec:
     image: {{ printf "%s:%s" .Values.image.repository (.Values.image.tag | default .Chart.AppVersion) | quote }}
     command: ["/deployer", "deploy"]
     serviceAccountName: {{ include "kdex-knative-faas-adaptor.serviceAccountName" . }}
+    {{- with .Values.deployer.jobNodeSelector }}
+    jobNodeSelector:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with .Values.deployer.jobTolerations }}
+    jobTolerations:
+      {{- toYaml . | nindent 4 }}
+    {{- end }}
   observer:
     image: {{ printf "%s:%s" .Values.image.repository (.Values.image.tag | default .Chart.AppVersion) | quote }}
     command: ["/deployer", "observe"]
