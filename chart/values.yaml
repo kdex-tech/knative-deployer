@@ -122,14 +122,23 @@ builders:
   # env is forwarded onto the kpack.io/Image's spec.build.env. Each
   # entry is passed to every buildpack in the lifecycle. Use this to
   # cross-compile to a different runtime architecture than the build
-  # node: e.g. GOOS=linux GOARCH=arm64 produces an arm64 function
-  # image even when kpack-build-pool nodes are amd64 (the upstream
-  # ghcr.io/buildpacks-community/kpack/* images don't ship arm64
-  # binaries, so the build pool stays amd64). Without this, function
-  # pods scheduled onto an arm64 runtime pool crash with
-  # "exec /cnb/process/cmd: exec format error" — the kpack-built
-  # amd64 binary can't run on arm64. Empty list leaves the default
-  # (build host's architecture).
+  # node: e.g. GOOS=linux GOARCH=arm64 produces an arm64 function image
+  # from an amd64 build pod. Without a matching arch, function pods
+  # crash with "exec /cnb/process/cmd: exec format error" — the
+  # kpack-built amd64 binary can't run on arm64. Empty list leaves the
+  # default (build host's architecture).
+  #
+  # Cross-compiling is no longer REQUIRED to target arm64. It was, while
+  # the bundled kpack shipped amd64-only images and the build pool had to
+  # stay amd64 as a result. kpack v0.18.0 (bundled here) publishes genuine
+  # multi-arch controller/webhook/build-init/lifecycle/completion images,
+  # and the Paketo jammy stacks and buildpacks this chart references are
+  # already multi-arch, so a build pod can run natively on an arm64 pool
+  # and emit an arm64 image with no cross-compile. Native arm64 needs the
+  # build pool to actually offer arm64 nodes: see builder.nodeSelector /
+  # builder.tolerations, and the kpack.* scheduling keys for the control
+  # plane. Cross-compiling remains valid when you deliberately want to
+  # build on one arch and run on another.
   env: []
 
   # cache.volumeSize is forwarded onto the kpack.io/Image's
