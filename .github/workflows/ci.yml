@@ -38,7 +38,8 @@ jobs:
     - name: Run Linter
       uses: golangci/golangci-lint-action@v9
       with:
-        version: v2.10.1
+        # Keep in sync with Makefile GOLANGCI_LINT_VERSION. v2.13.2 decodes go1.27.
+        version: v2.13.2
 
     - name: Run Unit Tests
       run: |

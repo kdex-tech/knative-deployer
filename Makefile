@@ -147,7 +147,10 @@ KUBECTL ?= kubectl
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
 
 ## Tool Versions
-GOLANGCI_LINT_VERSION ?= v2.10.1
+# Keep in sync with .github/workflows/ci.yml (golangci-lint-action `version:`) —
+# CI installs the linter itself and does NOT read this var. v2.13.2 decodes
+# go1.27 export data; v2.10.1 panics on it.
+GOLANGCI_LINT_VERSION ?= v2.13.2
 
 .PHONY: golangci-lint
 golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
