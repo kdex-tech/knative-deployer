@@ -51,11 +51,13 @@ knativeServing:
 # ghcr.io/kdex-tech/cli-tools. 0.3.12+ bundles the safe.directory
 # workaround required when the codegen Job's EmptyDir mounts as
 # root:root (the default in PSSRestricted pods without fsGroup) — see
-# kdex-tech/cli-tools#1.
+# kdex-tech/cli-tools#1. 0.3.13+ honours SOURCE_PATH, 0.3.16+ rebases
+# existing gen branches, and 0.3.17+ reports the gen-branch HEAD SHA,
+# all of which host-manager's codegen Job relies on.
 generatorGit:
   image:
     repository: ghcr.io/kdex-tech/cli-tools
-    tag: "0.3.12"
+    tag: "0.3.19"
   committerEmail: test@kdex.dev
   committerName: KDex Codegen Bot
 
