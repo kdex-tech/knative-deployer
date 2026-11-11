@@ -74,7 +74,8 @@ RENDERED_OFF=$(helm template test-release "$CHART_DIR" --namespace "$NAMESPACE" 
 
 assert_kind_present "$RENDERED_OFF" "KDexClusterFaaSAdaptor"
 # The chart ships no RBAC of its own: host-manager runs the deployer and
-# observer as its per-host ServiceAccount, so no ClusterRole remains here.
+# observer as <host>-function-deployer, a ServiceAccount whose namespaced Role
+# the host-manager chart ships, so no ClusterRole remains here.
 assert_kind_absent "$RENDERED_OFF" "ClusterRole"
 # Check for declared resources (apiVersion: …) rather than `kind: …` matches,
 # because the deployer's CRD references kpack kinds (e.g. builderRef.kind:
