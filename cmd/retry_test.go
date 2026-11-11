@@ -23,10 +23,9 @@ const (
 	testNode      = "gke-test-node-abc123"
 )
 
-// newFakeClient sets up the dynamic fake client with the four GVRs that
+// newFakeClient sets up the dynamic fake client with the GVRs that
 // retry.go touches. The kdexfunctions GVR is namespaced via a
-// kdexfunctionsList registration; same for the kpack types. Nodes are
-// cluster-scoped.
+// kdexfunctionsList registration; same for the kpack types.
 func newFakeClient(objs ...runtime.Object) *dynamicfake.FakeDynamicClient {
 	scheme := runtime.NewScheme()
 	gvrToListKind := map[schema.GroupVersionResource]string{
@@ -35,7 +34,6 @@ func newFakeClient(objs ...runtime.Object) *dynamicfake.FakeDynamicClient {
 		kpackImageGVR:     "ImageList",
 		kpackBuildGVR:     "BuildList",
 		podGVR:            "PodList",
-		nodeGVR:           "NodeList",
 	}
 	return dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, gvrToListKind, objs...)
 }
@@ -151,19 +149,6 @@ func withInitTerminated(name, reason string, exitCode *int) podOption {
 	}
 }
 
-func newNode(ready string) *unstructured.Unstructured {
-	return &unstructured.Unstructured{Object: map[string]any{
-		"apiVersion": "v1",
-		"kind":       "Node",
-		"metadata":   map[string]any{"name": testNode},
-		"status": map[string]any{
-			"conditions": []any{
-				map[string]any{"type": "Ready", "status": ready},
-			},
-		},
-	}}
-}
-
 func intPtr(i int) *int { return &i }
 
 // ---- buildFailed -----------------------------------------------------
@@ -203,7 +188,7 @@ func TestIsBuildPodPreempted_NoPodName(t *testing.T) {
 
 func TestIsBuildPodPreempted_DeletionTimestamp(t *testing.T) {
 	pod := newPod(withDeletionTimestamp("2026-05-20T15:00:00Z"))
-	client := newFakeClient(pod, newNode("True"))
+	client := newFakeClient(pod)
 	got, err := isBuildPodPreempted(context.Background(), client, newKPackBuild("False", testPod), testNamespace)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -220,7 +205,7 @@ func TestIsBuildPodPreempted_DeletionTimestampWithExitCode(t *testing.T) {
 		withDeletionTimestamp("2026-05-20T15:00:00Z"),
 		withInitTerminated("build", "Completed", intPtr(0)),
 	)
-	client := newFakeClient(pod, newNode("True"))
+	client := newFakeClient(pod)
 	got, err := isBuildPodPreempted(context.Background(), client, newKPackBuild("False", testPod), testNamespace)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -231,7 +216,7 @@ func TestIsBuildPodPreempted_DeletionTimestampWithExitCode(t *testing.T) {
 }
 
 func TestIsBuildPodPreempted_NodeShutdownReason(t *testing.T) {
-	client := newFakeClient(newPod(withPodReason("NodeShutdown")), newNode("True"))
+	client := newFakeClient(newPod(withPodReason("NodeShutdown")))
 	got, err := isBuildPodPreempted(context.Background(), client, newKPackBuild("False", testPod), testNamespace)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -241,32 +226,26 @@ func TestIsBuildPodPreempted_NodeShutdownReason(t *testing.T) {
 	}
 }
 
-func TestIsBuildPodPreempted_NodeNotReady(t *testing.T) {
-	client := newFakeClient(newPod(), newNode("False"))
-	got, err := isBuildPodPreempted(context.Background(), client, newKPackBuild("False", testPod), testNamespace)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !got {
-		t.Fatal("expected true when Pod's node Ready=False")
-	}
-}
-
-func TestIsBuildPodPreempted_NodeGone(t *testing.T) {
-	// No Node object registered → IsNotFound → treat as preempted.
+func TestIsBuildPodPreempted_NoNodeLookup(t *testing.T) {
+	// The observer runs as a namespaced ServiceAccount with no access to
+	// cluster-scoped Nodes, so isBuildPodPreempted must not read the
+	// Node at all. The pod below carries a spec.nodeName but no
+	// preemption reason, and no Node object is registered: a node GET
+	// would fail (Forbidden in-cluster, NotFound here). The answer must
+	// be a plain false with no error.
 	client := newFakeClient(newPod())
 	got, err := isBuildPodPreempted(context.Background(), client, newKPackBuild("False", testPod), testNamespace)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !got {
-		t.Fatal("expected true when Pod's node no longer exists")
+	if got {
+		t.Fatal("expected false for a pod with no preemption signal; the node must not be consulted")
 	}
 }
 
 func TestIsBuildPodPreempted_InitKilled(t *testing.T) {
 	pod := newPod(withInitTerminated("build", "Killed", nil))
-	client := newFakeClient(pod, newNode("True"))
+	client := newFakeClient(pod)
 	got, err := isBuildPodPreempted(context.Background(), client, newKPackBuild("False", testPod), testNamespace)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -279,7 +258,7 @@ func TestIsBuildPodPreempted_InitKilled(t *testing.T) {
 func TestIsBuildPodPreempted_OOMKilled(t *testing.T) {
 	// OOMKilled is OUR sizing problem, not infra preemption. Must NOT retry.
 	pod := newPod(withInitTerminated("build", "OOMKilled", intPtr(137)))
-	client := newFakeClient(pod, newNode("True"))
+	client := newFakeClient(pod)
 	got, err := isBuildPodPreempted(context.Background(), client, newKPackBuild("False", testPod), testNamespace)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -293,7 +272,7 @@ func TestIsBuildPodPreempted_BuildpackDetectFailure(t *testing.T) {
 	// Detect exiting with exit code 20 is a genuine "no buildpack
 	// matched the source" failure. Pod ran to completion; no preemption.
 	pod := newPod(withInitTerminated("detect", "Error", intPtr(20)))
-	client := newFakeClient(pod, newNode("True"))
+	client := newFakeClient(pod)
 	got, err := isBuildPodPreempted(context.Background(), client, newKPackBuild("False", testPod), testNamespace)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -401,7 +380,7 @@ func TestCheckAndRetryFailedBuild_PreemptedTriggersRetry(t *testing.T) {
 	build := newKPackBuild("False", testPod)
 	img := newKPackImage("", testBuild)
 	kf := newKDexFunction(0, time.Time{}, false)
-	client := newFakeClient(kf, img, build, pod, newNode("True"))
+	client := newFakeClient(kf, img, build, pod)
 
 	if err := checkAndRetryFailedBuild(context.Background(), client, kf, cfg); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -436,7 +415,7 @@ func TestCheckAndRetryFailedBuild_GenuineFailureNoRetry(t *testing.T) {
 	build := newKPackBuild("False", testPod)
 	img := newKPackImage("", testBuild)
 	kf := newKDexFunction(0, time.Time{}, false)
-	client := newFakeClient(kf, img, build, pod, newNode("True"))
+	client := newFakeClient(kf, img, build, pod)
 
 	if err := checkAndRetryFailedBuild(context.Background(), client, kf, cfg); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -459,7 +438,7 @@ func TestCheckAndRetryFailedBuild_BudgetExhausted(t *testing.T) {
 	build := newKPackBuild("False", testPod)
 	img := newKPackImage("", testBuild)
 	kf := newKDexFunction(3, time.Now().Add(-1*time.Hour).UTC(), false)
-	client := newFakeClient(kf, img, build, pod, newNode("True"))
+	client := newFakeClient(kf, img, build, pod)
 
 	if err := checkAndRetryFailedBuild(context.Background(), client, kf, cfg); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -483,7 +462,7 @@ func TestCheckAndRetryFailedBuild_CooldownActive(t *testing.T) {
 	build := newKPackBuild("False", testPod)
 	img := newKPackImage("", testBuild)
 	kf := newKDexFunction(1, time.Now().Add(-5*time.Minute).UTC(), false) // 5 min ago, cooldown 30 min
-	client := newFakeClient(kf, img, build, pod, newNode("True"))
+	client := newFakeClient(kf, img, build, pod)
 
 	if err := checkAndRetryFailedBuild(context.Background(), client, kf, cfg); err != nil {
 		t.Fatalf("unexpected error: %v", err)

@@ -41,7 +41,6 @@ var (
 	kpackImageGVR = schema.GroupVersionResource{Group: "kpack.io", Version: "v1alpha2", Resource: "images"}
 	kpackBuildGVR = schema.GroupVersionResource{Group: "kpack.io", Version: "v1alpha2", Resource: "builds"}
 	podGVR        = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "pods"}
-	nodeGVR       = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "nodes"}
 )
 
 const (
@@ -227,20 +226,7 @@ func isBuildPodPreempted(
 		}
 	}
 
-	// Signal 3: Pod's node is no longer Ready (Node gone, or its Ready
-	// condition is False and pre-dates the pod's last container state).
-	nodeName, _, _ := unstructured.NestedString(pod.Object, "spec", "nodeName")
-	if nodeName != "" {
-		nodeNotReady, err := isNodeNotReady(ctx, client, nodeName)
-		if err != nil {
-			return false, fmt.Errorf("node %s status: %w", nodeName, err)
-		}
-		if nodeNotReady {
-			return true, nil
-		}
-	}
-
-	// Signal 4: an init container terminated with reason=Killed (NOT
+	// Signal 3: an init container terminated with reason=Killed (NOT
 	// OOMKilled — that's our own sizing problem, not preemption). Pod
 	// remains in Pending phase with the failed init container terminated.
 	if anyInitContainerKilledExternally(pod) {
@@ -297,31 +283,6 @@ func anyInitContainerKilledExternally(pod *unstructured.Unstructured) bool {
 		}
 	}
 	return false
-}
-
-// isNodeNotReady fetches a Node and returns true when the Node either
-// no longer exists OR its Ready condition is False. Used by the Pod's-
-// node-disappeared preemption signal.
-func isNodeNotReady(ctx context.Context, client dynamic.Interface, name string) (bool, error) {
-	node, err := client.Resource(nodeGVR).Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		if kerrors.IsNotFound(err) {
-			return true, nil
-		}
-		return false, err
-	}
-	conds, _, _ := unstructured.NestedSlice(node.Object, "status", "conditions")
-	for _, c := range conds {
-		cond, ok := c.(map[string]any)
-		if !ok {
-			continue
-		}
-		if cond["type"] == "Ready" {
-			return cond["status"] != "True", nil
-		}
-	}
-	// No Ready condition recorded — be conservative and treat as Ready.
-	return false, nil
 }
 
 // triggerImageRebuild sets the additionalBuildNeeded annotation on the

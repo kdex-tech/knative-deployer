@@ -27,7 +27,6 @@ func preemptedBuildFixture() []runtime.Object {
 		newKPackImage("", testBuild),
 		newKPackBuild("False", testPod),
 		newPod(withPodReason("NodeShutdown")),
-		newNode("True"),
 		perHostFunction(),
 	}
 }

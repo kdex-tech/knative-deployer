@@ -49,14 +49,3 @@ Selector labels
 app.kubernetes.io/name: {{ include "kdex-knative-faas-adaptor.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
-
-{{/*
-Create the name of the service account to use
-*/}}
-{{- define "kdex-knative-faas-adaptor.serviceAccountName" -}}
-{{- if .Values.serviceAccount.create }}
-{{- default (include "kdex-knative-faas-adaptor.fullname" .) .Values.serviceAccount.name }}
-{{- else }}
-{{- default "default" .Values.serviceAccount.name }}
-{{- end }}
-{{- end }}
